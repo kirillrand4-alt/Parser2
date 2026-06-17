@@ -61,19 +61,37 @@ def main():
     if not args.no_search:
         r = sess.get(SEARCH_URL, params=search_params, timeout=30)
         show("SEARCH /v2/search", r)
-        # попробуем вытащить первый ИНН из ответа для company-зонда
-        if first_inn is None:
-            try:
-                data = r.json()
+        try:
+            data = r.json()
+            block = data.get("data", data)
+            records = block.get("Записи") if isinstance(block, dict) else None
+            print("\n----- КАЛИБРОВКА: поиск -----")
+            if isinstance(block, dict):
+                print("data ключи:", list(block.keys()))
+            if records:
+                print("записей на странице:", len(records))
+                print("ключи записи:", list(records[0].keys()))
+                print("первая запись:", json.dumps(records[0], ensure_ascii=False)[:1500])
+            if first_inn is None:
                 first_inn = _find_first_inn(data)
                 if first_inn:
-                    print(f"\n[авто] первый ИНН из выдачи: {first_inn}")
-            except Exception:
-                pass
+                    print("[авто] первый ИНН:", first_inn)
+        except Exception as e:
+            print("разбор поиска не удался:", e)
 
     if first_inn:
         r = sess.get(COMPANY_URL, params={"key": args.key, "inn": first_inn}, timeout=30)
         show("COMPANY /v2/company", r)
+        try:
+            data = r.json().get("data", {})
+            print("\n----- КАЛИБРОВКА: компания -----")
+            print("data ключи:", list(data.keys()))
+            for f in ("ИНН", "ОГРН", "НаимСокр", "НаимПолн", "ОКВЭД", "Статус",
+                      "Регион", "ЮрАдрес", "Адрес", "Контакты"):
+                if f in data:
+                    print(f"  {f} =", json.dumps(data[f], ensure_ascii=False)[:400])
+        except Exception as e:
+            print("разбор компании не удался:", e)
     else:
         print("\n[i] ИНН для company-зонда не найден — задайте --inn вручную.")
     return 0
