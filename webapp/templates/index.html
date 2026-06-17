@@ -45,8 +45,21 @@
 <main>
   <div class="card">
     <form id="form">
-      <label>Путь к дампу ЕГРЮЛ (файл .xml, архив .zip или папка на сервере)</label>
-      <input name="egrul_path" placeholder="/data/egrul/  или  /data/egrul.zip" required>
+      <label>Источник списка компаний</label>
+      <select name="source" id="source">
+        <option value="api" selected>API checko (/v2/search по ОКВЭД) — дамп не нужен</option>
+        <option value="egrul">Дамп ЕГРЮЛ (файл на сервере)</option>
+      </select>
+
+      <div id="egrul_block" style="display:none;">
+        <label>Путь к дампу ЕГРЮЛ (файл .xml, архив .zip или папка на сервере)</label>
+        <input name="egrul_path" placeholder="/data/egrul/  или  /data/egrul.zip">
+      </div>
+
+      <div id="api_block">
+        <label>Коды регионов через запятую (пусто = вся Россия)</label>
+        <input name="regions" placeholder="напр. 77, 50, 66 — или оставьте пустым">
+      </div>
 
       <div class="row">
         <div>
@@ -118,6 +131,17 @@
 <script>
 // Базовый префикс пути (пусто на корне, '/parsercompany' за nginx-подпутём)
 const BASE = "{{ request.script_root }}";
+
+// Переключение блоков в зависимости от источника
+const sourceSel = document.getElementById('source');
+function toggleSource() {
+  const api = sourceSel.value === 'api';
+  document.getElementById('egrul_block').style.display = api ? 'none' : 'block';
+  document.getElementById('api_block').style.display = api ? 'block' : 'none';
+}
+sourceSel.addEventListener('change', toggleSource);
+toggleSource();
+
 const form = document.getElementById('form');
 const runbtn = document.getElementById('runbtn');
 let timer = null;

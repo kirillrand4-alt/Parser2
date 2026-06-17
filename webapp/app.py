@@ -132,20 +132,29 @@ def index():
 @login_required
 def start():
     f = request.form
+    source = f.get("source", "egrul")           # egrul | api
     egrul_path = (f.get("egrul_path") or "").strip()
-    if not egrul_path or not os.path.exists(egrul_path):
-        return jsonify({"error": "Укажите существующий путь к дампу ЕГРЮЛ"}), 400
+    api_key = (f.get("api_key") or "").strip() or os.environ.get("CHECKO_API_KEY") or None
+    regions = [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()]
 
-    enrich_mode = f.get("enrich", "none")  # none | api | html
+    if source == "egrul":
+        if not egrul_path or not os.path.exists(egrul_path):
+            return jsonify({"error": "Укажите существующий путь к дампу ЕГРЮЛ"}), 400
+    elif source == "api" and not api_key:
+        return jsonify({"error": "Для источника API нужен ключ checko (поле «API-ключ» или env CHECKO_API_KEY)"}), 400
+
+    enrich_mode = f.get("enrich", "none")  # none | api | html (для egrul)
     config = PipelineConfig(
+        source=source,
         egrul_path=egrul_path,
         okved_set=f.get("okved_set", DEFAULT_SET),
         only_active=f.get("only_active", "on") == "on",
         enrich=enrich_mode != "none",
         prefer_api=enrich_mode == "api",
-        api_key=(f.get("api_key") or "").strip() or None,
+        api_key=api_key,
         delay=float(f.get("delay", "1.5") or 1.5),
         limit=int(f.get("limit", "0") or 0),
+        regions=regions,
     )
 
     job_id = uuid.uuid4().hex[:12]

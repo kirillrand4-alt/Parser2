@@ -20,10 +20,41 @@ import requests
 from .models import Company
 
 API_URL = "https://api.checko.ru/v2/company"
+SEARCH_URL = "https://api.checko.ru/v2/search"
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+
+# --- Калибруемая схема /v2/search ---------------------------------------
+# Имена параметров запроса и пути в ответе вынесены сюда, т.к. в доке checko
+# под конкретный ключ они могут отличаться. scripts/probe_checko.py печатает
+# реальный JSON — по нему правится ровно этот блок.
+SEARCH_BY_OKVED = "оквэд"          # значение параметра "by" для поиска по ОКВЭД
+SEARCH_PARAM = {
+    "by": "by",                    # «искать по»
+    "query": "query",              # значение (код ОКВЭД)
+    "region": "region",            # код региона (None = вся РФ)
+    "active": "active",            # фильтр действующих
+    "page": "page",                # номер страницы
+}
+SEARCH_ACTIVE_VALUE = "true"       # значение для active при only_active
+# где в ответе лежит список найденных записей (пробуем по очереди):
+SEARCH_LIST_KEYS = ("Записи", "data", "records", "items", "Результаты")
+# где в записи лежит ИНН / наименование / основной ОКВЭД:
+SEARCH_INN_KEYS = ("ИНН", "inn")
+SEARCH_NAME_KEYS = ("НаимСокр", "НаимПолн", "name", "Наим")
+SEARCH_OKVED_KEYS = ("ОКВЭД", "okved", "КодОКВЭД")
+
+# Поля в ответе /v2/company (тоже калибруются по probe):
+COMPANY_NAME_KEYS = ("НаимСокр", "НаимСокрЮЛ", "name")
+COMPANY_FULL_KEYS = ("НаимПолн", "НаимПолнЮЛ")
+COMPANY_OGRN_KEYS = ("ОГРН", "ogrn")
+COMPANY_OKVED_KEYS = ("ОКВЭД", "okved")
+COMPANY_REGION_KEYS = ("Регион", "region")
+COMPANY_STATUS_KEYS = ("Статус", "status")
+OKVED_CODE_KEYS = ("Код", "КодОКВЭД", "code")
+OKVED_NAME_KEYS = ("Наим", "НаимОКВЭД", "name")
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"(?:\+7|8|7)[\s\-()]*\d{3}[\s\-()]*\d{3}[\s\-()]*\d{2}[\s\-()]*\d{2}")
@@ -99,6 +130,45 @@ class CheckoClient:
             raise last_exc
         raise requests.RequestException(f"429 после {self.max_retries} попыток: {url}")
 
+    # --- поиск компаний по ОКВЭД (/v2/search) ---
+    def search_page(self, query: str, region: str | None, active: bool, page: int) -> dict:
+        """Одна страница выдачи /v2/search. Возвращает разобранный JSON."""
+        params = {"key": self.api_key}
+        params[SEARCH_PARAM["by"]] = SEARCH_BY_OKVED
+        params[SEARCH_PARAM["query"]] = query
+        params[SEARCH_PARAM["page"]] = page
+        if region:
+            params[SEARCH_PARAM["region"]] = region
+        if active:
+            params[SEARCH_PARAM["active"]] = SEARCH_ACTIVE_VALUE
+        resp = self._get(SEARCH_URL, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def extract_search_records(payload: dict) -> list[dict]:
+        """Достаёт список записей из ответа поиска (терпимо к ключам)."""
+        node = payload
+        if isinstance(payload, dict):
+            for k in SEARCH_LIST_KEYS:
+                if isinstance(payload.get(k), list):
+                    return payload[k]
+            data = payload.get("data") or payload.get("Данные")
+            if isinstance(data, dict):
+                for k in SEARCH_LIST_KEYS:
+                    if isinstance(data.get(k), list):
+                        return data[k]
+            if isinstance(data, list):
+                return data
+        return node if isinstance(node, list) else []
+
+    def company_data(self, inn: str) -> dict:
+        """Полный ответ /v2/company по ИНН (data-блок)."""
+        resp = self._get(API_URL, params={"key": self.api_key, "inn": inn})
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload.get("data") or payload.get("Данные") or payload
+
     # --- публичный метод ---
     def enrich(self, company: Company) -> Company:
         use_api = self.prefer_api and bool(self.api_key)
@@ -144,6 +214,61 @@ class CheckoClient:
         company.phones = _uniq(_norm_phone(p) for p in phones)
         company.emails = _uniq(emails)
         company.websites = _uniq(sites)
+
+
+def _first(d, keys):
+    if not isinstance(d, dict):
+        return ""
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, "", [], {}):
+            return v
+    return ""
+
+
+def extract_main_okved(data) -> tuple[str, str]:
+    """(код, наименование) основного ОКВЭД из ответа /v2/company."""
+    okved = _first(data, COMPANY_OKVED_KEYS)
+    if isinstance(okved, dict):
+        return str(_first(okved, OKVED_CODE_KEYS)), str(_first(okved, OKVED_NAME_KEYS))
+    if isinstance(okved, str):
+        return okved, ""
+    return "", ""
+
+
+def fill_company_from_data(company: Company, data: dict) -> Company:
+    """Заполняет поля Company из ответа /v2/company (имя, ОКВЭД, регион, контакты)."""
+    company.name = str(_first(data, COMPANY_NAME_KEYS) or company.name)
+    company.full_name = str(_first(data, COMPANY_FULL_KEYS) or company.full_name)
+    company.ogrn = str(_first(data, COMPANY_OGRN_KEYS) or company.ogrn)
+    code, name = extract_main_okved(data)
+    company.okved_code = code or company.okved_code
+    company.okved_name = name or company.okved_name
+    region = _first(data, COMPANY_REGION_KEYS)
+    company.region = (region if isinstance(region, str) else _first(region, ("Наим", "name"))) or company.region
+    status = _first(data, COMPANY_STATUS_KEYS)
+    company.status = (status if isinstance(status, str) else _first(status, ("Наим", "name"))) or company.status
+    phones, emails, sites = _extract_contacts_from_json(data)
+    company.phones = _uniq(_norm_phone(p) for p in phones)
+    company.emails = _uniq(emails)
+    company.websites = _uniq(sites)
+    return company
+
+
+def company_from_search_record(rec: dict) -> Company:
+    """Создаёт Company-заготовку из записи /v2/search (минимум — ИНН/имя/ОКВЭД)."""
+    okved = _first(rec, SEARCH_OKVED_KEYS)
+    if isinstance(okved, dict):
+        okved_code = str(_first(okved, OKVED_CODE_KEYS))
+        okved_name = str(_first(okved, OKVED_NAME_KEYS))
+    else:
+        okved_code, okved_name = str(okved or ""), ""
+    return Company(
+        inn=str(_first(rec, SEARCH_INN_KEYS) or ""),
+        name=str(_first(rec, SEARCH_NAME_KEYS) or ""),
+        okved_code=okved_code,
+        okved_name=okved_name,
+    )
 
 
 def _extract_contacts_from_json(data) -> tuple[list[str], list[str], list[str]]:

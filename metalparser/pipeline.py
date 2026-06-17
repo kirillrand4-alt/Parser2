@@ -1,26 +1,114 @@
-"""Оркестрация: ЕГРЮЛ → фильтр → дообогащение контактов → результат."""
+"""Оркестрация. Два источника списка компаний:
+
+  * source="egrul" — потоковый парсинг дампа ЕГРЮЛ + дообогащение контактов
+                     через checko (API/HTML);
+  * source="api"   — перечисление через checko /v2/search по ОКВЭД, затем
+                     полные данные и контакты через /v2/company. Дамп не нужен.
+
+В обоих случаях итог — компании с ОСНОВНЫМ ОКВЭД из целевых групп.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
-from .checko import CheckoClient
+from .checko import (
+    CheckoClient, company_from_search_record, fill_company_from_data,
+)
 from .egrul import iter_companies
 from .models import Company
 from .okved import OkvedMatcher, resolve_prefixes
 
+MAX_SEARCH_PAGES = 1000  # предохранитель от бесконечной пагинации
+
 
 @dataclass
 class PipelineConfig:
-    egrul_path: str
+    source: str = "egrul"              # 'egrul' | 'api'
+    egrul_path: str = ""
     okved_set: str = "core"
     extra_okved: list[str] = field(default_factory=list)
     only_active: bool = True
-    enrich: bool = True
+    enrich: bool = True                # для egrul: тянуть ли контакты
     api_key: str | None = None
     prefer_api: bool = True
     delay: float = 1.5
-    limit: int = 0  # 0 = без ограничения
+    limit: int = 0                     # 0 = без ограничения
+    regions: list[str] = field(default_factory=list)  # пусто = вся РФ
+
+
+def _matcher(config: PipelineConfig) -> OkvedMatcher:
+    return OkvedMatcher(resolve_prefixes(config.okved_set, config.extra_okved))
+
+
+def iter_run(
+    config: PipelineConfig,
+    on_progress: Callable[[int], None] | None = None,
+) -> Iterator[Company]:
+    """Отдаёт подходящие компании по мере готовности (с контактами)."""
+    if config.source == "api":
+        yield from _iter_api(config, on_progress)
+    else:
+        yield from _iter_egrul(config, on_progress)
+
+
+def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
+    matcher = _matcher(config)
+    client = (
+        CheckoClient(api_key=config.api_key, prefer_api=config.prefer_api, delay=config.delay)
+        if config.enrich else None
+    )
+    count = 0
+    for company in iter_companies(
+        config.egrul_path, matcher, only_active=config.only_active,
+        progress_every=5000, on_progress=on_progress,
+    ):
+        if client is not None:
+            client.enrich(company)
+        yield company
+        count += 1
+        if config.limit and count >= config.limit:
+            break
+
+
+def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
+    matcher = _matcher(config)
+    client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay)
+    queries = matcher.prefixes                       # коды ОКВЭД для поиска
+    regions = config.regions or [None]               # None = вся РФ
+    seen: set[str] = set()
+    count = 0
+    for region in regions:
+        for query in queries:
+            page = 1
+            while page <= MAX_SEARCH_PAGES:
+                payload = client.search_page(query, region, config.only_active, page)
+                records = client.extract_search_records(payload)
+                if not records:
+                    break
+                for rec in records:
+                    stub = company_from_search_record(rec)
+                    if not stub.inn or stub.inn in seen:
+                        continue
+                    seen.add(stub.inn)
+                    # Полные данные + контакты через /v2/company
+                    try:
+                        data = client.company_data(stub.inn)
+                        fill_company_from_data(stub, data)
+                        stub.enriched = True
+                        stub.enrich_source = "api"
+                    except Exception as exc:  # noqa: BLE001
+                        stub.enrich_error = f"{type(exc).__name__}: {exc}"
+                    # Пост-фильтр: основной ОКВЭД должен быть из целевых групп
+                    if not matcher.matches(stub.okved_code):
+                        continue
+                    yield stub
+                    count += 1
+                    if on_progress:
+                        on_progress(count)
+                    if config.limit and count >= config.limit:
+                        return
+                page += 1
 
 
 def run(
@@ -28,45 +116,10 @@ def run(
     on_company: Callable[[Company], None] | None = None,
     on_progress: Callable[[int], None] | None = None,
 ) -> list[Company]:
-    """Прогоняет пайплайн и возвращает список компаний.
-
-    on_company вызывается на каждую готовую (возможно дообогащённую) запись —
-    удобно для стриминга в веб/прогресс-бар.
-    """
-    matcher = OkvedMatcher(resolve_prefixes(config.okved_set, config.extra_okved))
-    client = (
-        CheckoClient(api_key=config.api_key, prefer_api=config.prefer_api, delay=config.delay)
-        if config.enrich else None
-    )
-
+    """Прогоняет пайплайн и возвращает список компаний."""
     results: list[Company] = []
-    for company in iter_companies(
-        config.egrul_path, matcher,
-        only_active=config.only_active,
-        progress_every=5000, on_progress=on_progress,
-    ):
-        if client is not None:
-            client.enrich(company)
+    for company in iter_run(config, on_progress=on_progress):
         results.append(company)
         if on_company:
             on_company(company)
-        if config.limit and len(results) >= config.limit:
-            break
     return results
-
-
-def iter_run(config: PipelineConfig) -> Iterator[Company]:
-    """Генераторная версия — отдаёт компании по мере готовности."""
-    matcher = OkvedMatcher(resolve_prefixes(config.okved_set, config.extra_okved))
-    client = (
-        CheckoClient(api_key=config.api_key, prefer_api=config.prefer_api, delay=config.delay)
-        if config.enrich else None
-    )
-    count = 0
-    for company in iter_companies(config.egrul_path, matcher, only_active=config.only_active):
-        if client is not None:
-            client.enrich(company)
-        yield company
-        count += 1
-        if config.limit and count >= config.limit:
-            break

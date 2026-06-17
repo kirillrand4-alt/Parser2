@@ -16,7 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Сбор действующих компаний по основному ОКВЭД (металлообработка) "
                     "из дампа ЕГРЮЛ ФНС с дообогащением контактов через checko.ru.",
     )
-    p.add_argument("egrul_path", help="путь к дампу ЕГРЮЛ: файл .xml, архив .zip или папка")
+    p.add_argument("egrul_path", nargs="?", default="",
+                   help="путь к дампу ЕГРЮЛ (для --source egrul): файл .xml, архив .zip или папка")
+    p.add_argument("--source", choices=("egrul", "api"), default="egrul",
+                   help="источник списка: egrul (дамп) или api (checko /v2/search). По умолч.: %(default)s")
+    p.add_argument("--region", action="append", default=[],
+                   help="код региона для --source api (можно несколько; пусто = вся РФ)")
     p.add_argument("--okved-set", choices=sorted(OKVED_SETS), default=DEFAULT_SET,
                    help="набор основных ОКВЭД (по умолчанию: %(default)s)")
     p.add_argument("--okved", action="append", default=[],
@@ -39,12 +44,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.source == "egrul" and not args.egrul_path:
+        print("Для --source egrul укажите путь к дампу ЕГРЮЛ.", file=sys.stderr)
+        return 2
+    if args.source == "api" and not (args.api_key or __import__("os").environ.get("CHECKO_API_KEY")):
+        print("Для --source api нужен ключ: --api-key или env CHECKO_API_KEY.", file=sys.stderr)
+        return 2
+
+    print(f"Источник: {args.source}", file=sys.stderr)
     print(f"Набор ОКВЭД: {OKVED_SET_LABELS.get(args.okved_set, args.okved_set)}", file=sys.stderr)
     if args.okved:
         print(f"Доп. ОКВЭД: {', '.join(args.okved)}", file=sys.stderr)
     print(f"Статус: {'любой' if args.all_statuses else 'только действующие'}", file=sys.stderr)
 
     config = PipelineConfig(
+        source=args.source,
         egrul_path=args.egrul_path,
         okved_set=args.okved_set,
         extra_okved=args.okved,
@@ -54,6 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         prefer_api=not args.html,
         delay=args.delay,
         limit=args.limit,
+        regions=args.region,
     )
 
     start = time.monotonic()
@@ -64,8 +79,9 @@ def main(argv: list[str] | None = None) -> int:
         if found[0] % 50 == 0:
             print(f"  найдено: {found[0]}", file=sys.stderr)
 
-    def on_progress(scanned):
-        print(f"  просмотрено записей ЕГРЮЛ: {scanned}", file=sys.stderr)
+    def on_progress(n):
+        label = "найдено через API" if args.source == "api" else "просмотрено записей ЕГРЮЛ"
+        print(f"  {label}: {n}", file=sys.stderr)
 
     companies = run(config, on_company=on_company, on_progress=on_progress)
 
