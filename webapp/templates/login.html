@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Вход — парсер компаний</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin:0; height:100vh;
+      display:flex; align-items:center; justify-content:center;
+      background:#0f172a; color:#e2e8f0; }
+    .card { background:#1e293b; border:1px solid #334155; border-radius:14px;
+      padding:28px; width:340px; }
+    h1 { font-size:18px; margin:0 0 4px; }
+    .sub { color:#94a3b8; font-size:13px; margin-bottom:18px; }
+    label { display:block; font-size:13px; color:#94a3b8; margin:12px 0 4px; }
+    input { width:100%; padding:10px; border-radius:8px; border:1px solid #475569;
+      background:#0b1220; color:#e2e8f0; font-size:14px; }
+    button { margin-top:18px; width:100%; background:#38bdf8; color:#04263a; border:none;
+      padding:11px; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:default; }
+    .err { color:#fca5a5; font-size:13px; margin-top:12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Парсер компаний</h1>
+    <div class="sub">Закрытый раздел · вход по паролю</div>
+    {% if not disabled %}
+    <form method="post">
+      <label>Логин</label>
+      <input name="username" autofocus autocomplete="username">
+      <label>Пароль</label>
+      <input name="password" type="password" autocomplete="current-password">
+      <button type="submit">Войти</button>
+    </form>
+    {% endif %}
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  </div>
+</body>
+</html>

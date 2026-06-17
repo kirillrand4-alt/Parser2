@@ -64,14 +64,62 @@ python -m metalparser.cli /path/to/egrul.xml --html --delay 3
 - `narrow` — только **25.5–25.9** (прямая обработка металла);
 - `wide` — `core` + **46.72** (опт. торговля металлами) + **33.11** (ремонт).
 
-## Веб-интерфейс
+## Веб-интерфейс (закрытый раздел по паролю)
+
+Раздел защищён логином: все маршруты доступны только после входа.
+Пароль задаётся переменной окружения `PARSER_PASSWORD` (без неё вход закрыт).
 
 ```bash
-python -m webapp.app          # http://127.0.0.1:5000
+export PARSER_PASSWORD='придумайте_пароль'   # обязательно
+export PARSER_USERNAME='admin'               # необязательно (по умолчанию admin)
+export SECRET_KEY="$(python -c 'import secrets;print(secrets.token_hex(32))')"
+python -m webapp.app                          # http://127.0.0.1:5000
 ```
+
+Открыть `http://127.0.0.1:5000` → страница входа → ввести логин/пароль →
+форма парсера. Кнопка «Выход» в правом верхнем углу завершает сессию.
 
 Форма позволяет указать путь к дампу, набор ОКВЭД, статус, режим обогащения,
 лимит; показывает прогресс и таблицу, даёт скачать CSV/Excel.
+
+### Деплой как раздел на parsercompressor.online
+
+Боевой запуск под gunicorn:
+
+```bash
+export PARSER_PASSWORD='...' SECRET_KEY='...'
+gunicorn -w 2 -b 127.0.0.1:8001 webapp.app:app
+```
+
+Вариант А — **поддомен** `parser.parsercompressor.online` (nginx):
+
+```nginx
+server {
+    server_name parser.parsercompressor.online;
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Вариант Б — **подпуть** `parsercompressor.online/parser` (nginx):
+
+```nginx
+location /parser/ {
+    proxy_pass http://127.0.0.1:8001/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Prefix /parser;   # ProxyFix учитывает префикс
+}
+```
+
+Приложение уже обёрнуто в `ProxyFix`, поэтому при работе за nginx с заголовком
+`X-Forwarded-Prefix` ссылки/редиректы строятся правильно. Обязательно выдайте
+домену HTTPS (сертификат), т.к. пароль и сессионная кука должны идти по TLS.
 
 ## Структура проекта
 

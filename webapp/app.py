@@ -2,28 +2,49 @@
 
 Запуск:
     pip install -r requirements.txt
-    python -m webapp.app        # затем открыть http://127.0.0.1:5000
+    export PARSER_PASSWORD=ваш_пароль       # пароль для входа в раздел
+    python -m webapp.app                     # затем открыть http://127.0.0.1:5000
 
 Возможности:
+  * запароленный вход (логин-страница + сессия);
   * форма: путь к дампу ЕГРЮЛ, набор ОКВЭД, статус, режим обогащения, лимит;
   * фоновый прогон с прогрессом;
   * таблица результатов (название, ИНН, вид деятельности, телефоны/почты/сайты);
   * выгрузка CSV / Excel.
+
+Переменные окружения:
+  PARSER_PASSWORD  — пароль для входа (обязательно для защиты раздела);
+  PARSER_USERNAME  — логин (по умолчанию 'admin');
+  SECRET_KEY       — ключ подписи сессии (по умолчанию случайный на запуск);
+  PORT             — порт (по умолчанию 5000).
 """
 from __future__ import annotations
 
+import functools
 import os
+import secrets
 import threading
 import time
 import uuid
 
-from flask import Flask, render_template, request, jsonify, send_file, abort
+from flask import (
+    Flask, render_template, request, jsonify, send_file, abort,
+    session, redirect, url_for,
+)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from metalparser.export import write_csv, write_excel
 from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET
 from metalparser.pipeline import PipelineConfig, run
 
 app = Flask(__name__)
+# Работа за обратным прокси (nginx) — корректные схемы/префиксы для поддомена/пути
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+# Учётные данные раздела
+PARSER_USERNAME = os.environ.get("PARSER_USERNAME", "admin")
+PARSER_PASSWORD = os.environ.get("PARSER_PASSWORD", "")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -31,6 +52,42 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # Состояние задач в памяти (один процесс). job_id -> dict
 JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
+
+
+def login_required(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if not session.get("auth"):
+            return redirect(url_for("login", next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = ""
+    if not PARSER_PASSWORD:
+        # Защита не настроена — явно предупреждаем, вход не пускаем
+        return render_template("login.html",
+                               error="Пароль не задан: установите переменную окружения "
+                                     "PARSER_PASSWORD на сервере и перезапустите.",
+                               disabled=True), 503
+    if request.method == "POST":
+        user = (request.form.get("username") or "").strip()
+        pwd = request.form.get("password") or ""
+        if secrets.compare_digest(user, PARSER_USERNAME) and \
+                secrets.compare_digest(pwd, PARSER_PASSWORD):
+            session["auth"] = True
+            nxt = request.args.get("next") or url_for("index")
+            return redirect(nxt)
+        error = "Неверный логин или пароль"
+    return render_template("login.html", error=error, disabled=False)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 def _worker(job_id: str, config: PipelineConfig):
@@ -63,6 +120,7 @@ def _worker(job_id: str, config: PipelineConfig):
 
 
 @app.route("/")
+@login_required
 def index():
     return render_template(
         "index.html",
@@ -72,6 +130,7 @@ def index():
 
 
 @app.route("/start", methods=["POST"])
+@login_required
 def start():
     f = request.form
     egrul_path = (f.get("egrul_path") or "").strip()
@@ -100,6 +159,7 @@ def start():
 
 
 @app.route("/status/<job_id>")
+@login_required
 def status(job_id: str):
     job = JOBS.get(job_id)
     if not job:
@@ -116,6 +176,7 @@ def status(job_id: str):
 
 
 @app.route("/download/<job_id>.<fmt>")
+@login_required
 def download(job_id: str, fmt: str):
     job = JOBS.get(job_id)
     if not job or fmt not in ("csv", "xlsx"):
