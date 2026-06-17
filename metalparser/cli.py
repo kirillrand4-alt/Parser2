@@ -22,8 +22,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="источник списка: egrul (дамп) или api (checko /v2/search). По умолч.: %(default)s")
     p.add_argument("--region", action="append", default=[],
                    help="код региона для --source api (можно несколько; пусто = вся РФ)")
-    p.add_argument("--okved-set", choices=sorted(OKVED_SETS), default=DEFAULT_SET,
-                   help="набор основных ОКВЭД (по умолчанию: %(default)s)")
+    p.add_argument("--okved-set", choices=sorted(OKVED_SETS) + ["none"], default=DEFAULT_SET,
+                   help="набор основных ОКВЭД (none = только из --okved). По умолчанию: %(default)s")
     p.add_argument("--okved", action="append", default=[],
                    help="доп. префикс ОКВЭД (можно несколько раз), напр. --okved 28.41")
     p.add_argument("--all-statuses", action="store_true",

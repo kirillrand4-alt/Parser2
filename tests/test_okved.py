@@ -1,4 +1,4 @@
-from metalparser.okved import OkvedMatcher, normalize_code, resolve_prefixes
+from metalparser.okved import OkvedMatcher, normalize_code, resolve_prefixes, search_codes
 
 
 def test_normalize():
@@ -24,6 +24,23 @@ def test_prefix_boundaries():
     assert not m.matches("2.50")
     assert m.matches("28.49")  # 28.49 относится к подклассу 28.4
     assert not m.matches("28.5")
+
+
+def test_search_codes_expansion():
+    codes = search_codes(["24", "25", "28.4"])
+    # развёрнуты конкретные группы, нет «голых» префиксов
+    assert "25.62" in codes and "24.10" in codes and "28.41" in codes and "28.49" in codes
+    assert "24" not in codes and "25" not in codes and "28.4" not in codes
+    # не затронуты чужие классы
+    assert all(not c.startswith("46.") for c in codes)
+    assert all(not c.startswith("33.") for c in codes)
+
+
+def test_search_codes_wide_and_custom():
+    wide = search_codes(["46.72", "33.11"])
+    assert "46.72" in wide and "46.72.21" in wide and "33.11" in wide
+    # произвольный конкретный код вне справочника добавляется как есть
+    assert "62.01" in search_codes(["62.01"])
 
 
 def test_resolve_prefixes_dedup():

@@ -17,9 +17,17 @@ from .checko import (
 )
 from .egrul import iter_companies
 from .models import Company
-from .okved import OkvedMatcher, resolve_prefixes
+from .okved import OkvedMatcher, resolve_prefixes, search_codes
 
 MAX_SEARCH_PAGES = 1000  # предохранитель от бесконечной пагинации
+
+# Подстроки статусов, означающих НЕдействующее юрлицо (страховка к active=true)
+_INACTIVE_STATUS = ("прекра", "ликвид", "исключ", "недейств", "реорганиз", "банкрот")
+
+
+def _is_active_status(status: str) -> bool:
+    s = (status or "").lower()
+    return not any(k in s for k in _INACTIVE_STATUS)
 
 
 @dataclass
@@ -74,7 +82,8 @@ def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
 def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
     matcher = _matcher(config)
     client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay)
-    queries = matcher.prefixes                       # коды ОКВЭД для поиска
+    # checko /v2/search ищет по точному коду-группе → разворачиваем префиксы
+    queries = search_codes(matcher.prefixes)
     regions = config.regions or [None]               # None = вся РФ
     seen: set[str] = set()
     count = 0
@@ -91,6 +100,9 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
                     if not stub.inn or stub.inn in seen:
                         continue
                     seen.add(stub.inn)
+                    # поиск идёт по точному осн. ОКВЭД → код известен заранее
+                    if not stub.okved_code:
+                        stub.okved_code = query
                     # Полные данные + контакты через /v2/company
                     try:
                         data = client.company_data(stub.inn)
@@ -101,6 +113,9 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
                         stub.enrich_error = f"{type(exc).__name__}: {exc}"
                     # Пост-фильтр: основной ОКВЭД должен быть из целевых групп
                     if not matcher.matches(stub.okved_code):
+                        continue
+                    # Пост-фильтр: только действующие (если статус известен)
+                    if config.only_active and stub.status and not _is_active_status(stub.status):
                         continue
                     yield stub
                     count += 1
