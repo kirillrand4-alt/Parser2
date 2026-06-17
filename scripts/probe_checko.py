@@ -57,6 +57,7 @@ def main():
 
     sess = requests.Session()
 
+    search_summary = None
     first_inn = args.inn
     if not args.no_search:
         r = sess.get(SEARCH_URL, params=search_params, timeout=30)
@@ -64,6 +65,13 @@ def main():
         try:
             data = r.json()
             block = data.get("data", data)
+            if isinstance(block, dict):
+                search_summary = (
+                    f"query={search_params.get('query')}  "
+                    f"ЗапВсего={block.get('ЗапВсего')}  "
+                    f"СтрВсего={block.get('СтрВсего')}  "
+                    f"записей_на_стр={len(block.get('Записи') or [])}"
+                )
             records = block.get("Записи") if isinstance(block, dict) else None
             print("\n----- КАЛИБРОВКА: поиск -----")
             if isinstance(block, dict):
@@ -94,6 +102,10 @@ def main():
             print("разбор компании не удался:", e)
     else:
         print("\n[i] ИНН для company-зонда не найден — задайте --inn вручную.")
+
+    if search_summary:
+        print("\n========== ИТОГ ПОИСКА ==========")
+        print(search_summary)
     return 0
 
 
