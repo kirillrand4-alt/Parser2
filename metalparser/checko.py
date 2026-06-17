@@ -251,6 +251,11 @@ def fill_company_from_data(company: Company, data: dict) -> Company:
     company.region = (region if isinstance(region, str) else _first(region, ("Наим", "name"))) or company.region
     status = _first(data, COMPANY_STATUS_KEYS)
     company.status = (status if isinstance(status, str) else _first(status, ("Наим", "name"))) or company.status
+    addr = _first(data, ("ЮрАдрес", "Адрес", "АдресЮЛ"))
+    if isinstance(addr, dict):
+        company.address = str(_first(addr, ("АдресРФ", "Адрес", "НасПункт")) or company.address)
+    elif isinstance(addr, str):
+        company.address = addr or company.address
     phones, emails, sites = _extract_contacts_from_json(data)
     company.phones = _uniq(_norm_phone(p) for p in phones)
     company.emails = _uniq(emails)
@@ -258,16 +263,37 @@ def fill_company_from_data(company: Company, data: dict) -> Company:
     return company
 
 
+def _deep_find_inn(node) -> str:
+    """Рекурсивно ищет ИНН (10–12 цифр) по ключу ИНН/inn — подстраховка."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if str(k).lower() in ("инн", "inn") and isinstance(v, (str, int)):
+                s = str(v)
+                if s.isdigit() and 10 <= len(s) <= 12:
+                    return s
+        for v in node.values():
+            r = _deep_find_inn(v)
+            if r:
+                return r
+    elif isinstance(node, list):
+        for item in node:
+            r = _deep_find_inn(item)
+            if r:
+                return r
+    return ""
+
+
 def company_from_search_record(rec: dict) -> Company:
-    """Создаёт Company-заготовку из записи /v2/search (минимум — ИНН/имя/ОКВЭД)."""
+    """Создаёт Company-заготовку из записи /v2/search (нужен прежде всего ИНН)."""
     okved = _first(rec, SEARCH_OKVED_KEYS)
     if isinstance(okved, dict):
         okved_code = str(_first(okved, OKVED_CODE_KEYS))
         okved_name = str(_first(okved, OKVED_NAME_KEYS))
     else:
         okved_code, okved_name = str(okved or ""), ""
+    inn = str(_first(rec, SEARCH_INN_KEYS) or "") or _deep_find_inn(rec)
     return Company(
-        inn=str(_first(rec, SEARCH_INN_KEYS) or ""),
+        inn=inn,
         name=str(_first(rec, SEARCH_NAME_KEYS) or ""),
         okved_code=okved_code,
         okved_name=okved_name,
