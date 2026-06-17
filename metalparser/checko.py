@@ -30,9 +30,11 @@ DEFAULT_UA = (
 # Имена параметров запроса и пути в ответе вынесены сюда, т.к. в доке checko
 # под конкретный ключ они могут отличаться. scripts/probe_checko.py печатает
 # реальный JSON — по нему правится ровно этот блок.
-SEARCH_BY_OKVED = "оквэд"          # значение параметра "by" для поиска по ОКВЭД
+SEARCH_BY_OKVED = "okved"          # значение параметра "by" (латиницей!) — поиск по осн. ОКВЭД
+SEARCH_OBJ = "org"                 # тип объекта: организации (обязательный параметр)
 SEARCH_PARAM = {
     "by": "by",                    # «искать по»
+    "obj": "obj",                  # тип объекта (org)
     "query": "query",              # значение (код ОКВЭД)
     "region": "region",            # код региона (None = вся РФ)
     "active": "active",            # фильтр действующих
@@ -135,6 +137,7 @@ class CheckoClient:
         """Одна страница выдачи /v2/search. Возвращает разобранный JSON."""
         params = {"key": self.api_key}
         params[SEARCH_PARAM["by"]] = SEARCH_BY_OKVED
+        params[SEARCH_PARAM["obj"]] = SEARCH_OBJ
         params[SEARCH_PARAM["query"]] = query
         params[SEARCH_PARAM["page"]] = page
         if region:

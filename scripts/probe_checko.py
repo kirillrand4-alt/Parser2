@@ -47,8 +47,9 @@ def main():
         print("Нет ключа: задайте --key или env CHECKO_API_KEY", file=sys.stderr)
         return 2
 
-    # значения по умолчанию — наша «лучшая догадка»; переопределяются через --param
-    search_params = {"key": args.key, "by": "оквэд", "query": "25", "page": "1"}
+    # значения по умолчанию (подтверждены докой checko); переопределяются через --param
+    search_params = {"key": args.key, "by": "okved", "obj": "org",
+                     "query": "25", "active": "true", "page": "1"}
     for p in args.param:
         if "=" in p:
             k, v = p.split("=", 1)
