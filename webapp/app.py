@@ -34,7 +34,7 @@ from flask import (
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from metalparser.export import write_csv, write_excel
-from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET
+from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_CATALOG
 from metalparser.pipeline import PipelineConfig, run
 
 app = Flask(__name__)
@@ -123,7 +123,7 @@ def _worker(job_id: str, config: PipelineConfig):
 def index():
     return render_template(
         "index.html",
-        okved_sets={k: OKVED_SET_LABELS.get(k, k) for k in sorted(OKVED_SETS)},
+        catalog=OKVED_CATALOG,
         default_set=DEFAULT_SET,
     )
 
@@ -143,11 +143,16 @@ def start():
     elif source == "api" and not api_key:
         return jsonify({"error": "Для источника API нужен ключ checko (поле «API-ключ» или env CHECKO_API_KEY)"}), 400
 
+    okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
+    if not okved_codes:
+        return jsonify({"error": "Выберите хотя бы один ОКВЭД (класс или конкретный код)"}), 400
+
     enrich_mode = f.get("enrich", "none")  # none | api | html (для egrul)
     config = PipelineConfig(
         source=source,
         egrul_path=egrul_path,
-        okved_set=f.get("okved_set", DEFAULT_SET),
+        okved_set="none",
+        extra_okved=okved_codes,
         only_active=f.get("only_active", "on") == "on",
         enrich=enrich_mode != "none",
         prefer_api=enrich_mode == "api",

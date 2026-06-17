@@ -32,6 +32,15 @@
     a.dl { color:var(--acc); margin-right:16px; text-decoration:none; font-weight:600; }
     .err { color:#fca5a5; }
     .muted { color:var(--mut); font-size:12px; }
+    .okved-catalog { border:1px solid #475569; border-radius:8px; padding:8px 12px;
+      background:#0b1220; max-height:320px; overflow:auto; }
+    .okved-sec { padding:6px 0; border-bottom:1px solid #1e293b; }
+    .okved-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .chk { display:block; font-size:13px; color:var(--txt); margin:4px 0; font-weight:400; }
+    .chk.strong, .strong { font-weight:600; }
+    .chk input { width:auto; margin-right:6px; }
+    .okved-codes { padding:6px 0 6px 18px; }
+    .toggle { color:var(--acc); font-size:12px; text-decoration:none; white-space:nowrap; }
   </style>
 </head>
 <body>
@@ -64,24 +73,38 @@
         <input name="regions" placeholder="напр. 77, 50, 66 — или оставьте пустым">
       </div>
 
-      <div class="row">
-        <div>
-          <label>Набор основных ОКВЭД</label>
-          <select name="okved_set">
-            {% for key, label in okved_sets.items() %}
-              <option value="{{ key }}" {% if key == default_set %}selected{% endif %}>{{ label }}</option>
+      <label>Основные ОКВЭД — отметьте классы или конкретные коды</label>
+      <div class="okved-catalog">
+        {% for sec in catalog %}
+        <div class="okved-sec">
+          <div class="okved-head">
+            {% if sec.prefix %}
+            <label class="chk strong">
+              <input type="checkbox" class="okved-class" name="okved_codes" value="{{ sec.prefix }}"
+                     data-sec="sec{{ loop.index }}"
+                     {% if sec.prefix in ['24','25','28.4'] %}checked{% endif %}>
+              {{ sec.title }} <span class="muted">(весь класс)</span>
+            </label>
+            {% else %}
+            <div class="strong">{{ sec.title }}</div>
+            {% endif %}
+            <a href="#" class="toggle" data-sec="sec{{ loop.index }}">показать коды ▾</a>
+          </div>
+          <div class="okved-codes" id="sec{{ loop.index }}" style="display:none;">
+            {% for code, name in sec.codes %}
+            <label class="chk"><input type="checkbox" name="okved_codes" value="{{ code }}"> {{ code }} — {{ name }}</label>
             {% endfor %}
-          </select>
+          </div>
         </div>
-        <div>
-          <label>Обогащение контактами (checko)</label>
-          <select name="enrich" id="enrich">
-            <option value="api">API (нужен ключ)</option>
-            <option value="html">HTML (без ключа, медленно)</option>
-            <option value="none" selected>Без контактов (только ЕГРЮЛ)</option>
-          </select>
-        </div>
+        {% endfor %}
       </div>
+
+      <label>Обогащение контактами (checko)</label>
+      <select name="enrich" id="enrich">
+        <option value="api">API (нужен ключ)</option>
+        <option value="html">HTML (без ключа, медленно)</option>
+        <option value="none" selected>Без контактов (только ЕГРЮЛ)</option>
+      </select>
 
       <div class="row">
         <div>
@@ -144,6 +167,26 @@ function toggleSource() {
 }
 sourceSel.addEventListener('change', toggleSource);
 toggleSource();
+
+// Каталог ОКВЭД: разворачивание секций
+document.querySelectorAll('.toggle').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const el = document.getElementById(a.dataset.sec);
+    const show = el.style.display === 'none';
+    el.style.display = show ? 'block' : 'none';
+    a.textContent = show ? 'скрыть коды ▴' : 'показать коды ▾';
+  });
+});
+// «Весь класс» отмечен → детальные коды отключаются (отправляется только префикс)
+document.querySelectorAll('.okved-class').forEach(cb => {
+  const sync = () => {
+    document.getElementById(cb.dataset.sec)
+      .querySelectorAll('input[type=checkbox]').forEach(c => { c.disabled = cb.checked; });
+  };
+  cb.addEventListener('change', sync);
+  sync();
+});
 
 const form = document.getElementById('form');
 const runbtn = document.getElementById('runbtn');
