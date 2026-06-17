@@ -58,7 +58,7 @@ def login_required(view):
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
         if not session.get("auth"):
-            return redirect(url_for("login", next=request.path))
+            return redirect(url_for("login"))
         return view(*args, **kwargs)
     return wrapped
 
@@ -78,8 +78,7 @@ def login():
         if secrets.compare_digest(user, PARSER_USERNAME) and \
                 secrets.compare_digest(pwd, PARSER_PASSWORD):
             session["auth"] = True
-            nxt = request.args.get("next") or url_for("index")
-            return redirect(nxt)
+            return redirect(url_for("index"))
         error = "Неверный логин или пароль"
     return render_template("login.html", error=error, disabled=False)
 

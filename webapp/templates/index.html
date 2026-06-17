@@ -40,7 +40,7 @@
     <h1>Парсер компаний — металлообработка</h1>
     <div class="sub">Источник списка: дамп ЕГРЮЛ ФНС · контакты: checko.ru · фильтр по основному ОКВЭД и статусу «Действующее»</div>
   </div>
-  <a href="/logout" style="color:#94a3b8; font-size:13px; text-decoration:none;">Выход →</a>
+  <a href="{{ request.script_root }}/logout" style="color:#94a3b8; font-size:13px; text-decoration:none;">Выход →</a>
 </header>
 <main>
   <div class="card">
@@ -116,6 +116,8 @@
 </main>
 
 <script>
+// Базовый префикс пути (пусто на корне, '/parsercompany' за nginx-подпутём)
+const BASE = "{{ request.script_root }}";
 const form = document.getElementById('form');
 const runbtn = document.getElementById('runbtn');
 let timer = null;
@@ -128,7 +130,7 @@ form.addEventListener('submit', async (e) => {
   document.getElementById('err').textContent = '';
   document.getElementById('downloads').style.display = 'none';
 
-  const resp = await fetch('/start', { method: 'POST', body: new FormData(form) });
+  const resp = await fetch(BASE + '/start', { method: 'POST', body: new FormData(form) });
   const data = await resp.json();
   if (!resp.ok) {
     document.getElementById('err').textContent = data.error || 'Ошибка запуска';
@@ -143,7 +145,7 @@ function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').repla
 function poll(jobId) {
   if (timer) clearInterval(timer);
   timer = setInterval(async () => {
-    const r = await fetch('/status/' + jobId);
+    const r = await fetch(BASE + '/status/' + jobId);
     if (!r.ok) return;
     const s = await r.json();
     document.getElementById('st').textContent = s.status;
@@ -169,8 +171,8 @@ function poll(jobId) {
       runbtn.disabled = false;
       if (s.has_files) {
         document.getElementById('downloads').style.display = 'block';
-        document.getElementById('dlcsv').href = '/download/' + jobId + '.csv';
-        document.getElementById('dlxlsx').href = '/download/' + jobId + '.xlsx';
+        document.getElementById('dlcsv').href = BASE + '/download/' + jobId + '.csv';
+        document.getElementById('dlxlsx').href = BASE + '/download/' + jobId + '.xlsx';
       }
     }
   }, 1000);
