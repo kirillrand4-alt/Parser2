@@ -1,0 +1,24 @@
+# systemd-служба парсера. Установка:
+#   sudo cp deploy/metalparser.service /etc/systemd/system/metalparser.service
+#   (при необходимости отредактируйте пути/пароль ниже)
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now metalparser
+#   sudo systemctl status metalparser
+[Unit]
+Description=metalparser (веб-раздел парсинга компаний)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/seostat/Parser2
+# Пароль входа в раздел и постоянный ключ сессии (замените значения!)
+Environment=PARSER_PASSWORD=Parser2Company
+Environment=PARSER_USERNAME=admin
+Environment=SECRET_KEY=ЗАМЕНИТЕ_НА_СЛУЧАЙНУЮ_СТРОКУ
+# gunicorn слушает ТОЛЬКО локально — наружу проксирует nginx
+ExecStart=/opt/seostat/Parser2/.venv/bin/gunicorn -w 2 -b 127.0.0.1:8001 webapp.app:app
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
