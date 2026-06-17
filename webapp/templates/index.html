@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Парсер компаний — металлообработка (ЕГРЮЛ + checko)</title>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --acc:#38bdf8; --txt:#e2e8f0; --mut:#94a3b8; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin:0; background:var(--bg); color:var(--txt); }
+    header { padding:18px 24px; background:var(--card); border-bottom:1px solid #334155; }
+    h1 { font-size:18px; margin:0; }
+    .sub { color:var(--mut); font-size:13px; margin-top:4px; }
+    main { padding:24px; max-width:1200px; margin:0 auto; }
+    .card { background:var(--card); border:1px solid #334155; border-radius:12px; padding:18px; margin-bottom:18px; }
+    label { display:block; font-size:13px; color:var(--mut); margin:10px 0 4px; }
+    input, select { width:100%; padding:9px 10px; border-radius:8px; border:1px solid #475569;
+      background:#0b1220; color:var(--txt); font-size:14px; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; }
+    .row > div { flex:1; min-width:180px; }
+    .check { display:flex; align-items:center; gap:8px; margin-top:14px; }
+    .check input { width:auto; }
+    button { margin-top:16px; background:var(--acc); color:#04263a; border:none; padding:11px 20px;
+      border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:default; }
+    .status { font-size:14px; margin:10px 0; }
+    .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; background:#334155; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #334155; vertical-align:top; }
+    th { color:var(--mut); position:sticky; top:0; background:var(--card); }
+    .tablewrap { max-height:560px; overflow:auto; border-radius:8px; }
+    a.dl { color:var(--acc); margin-right:16px; text-decoration:none; font-weight:600; }
+    .err { color:#fca5a5; }
+    .muted { color:var(--mut); font-size:12px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Парсер компаний — металлообработка</h1>
+  <div class="sub">Источник списка: дамп ЕГРЮЛ ФНС · контакты: checko.ru · фильтр по основному ОКВЭД и статусу «Действующее»</div>
+</header>
+<main>
+  <div class="card">
+    <form id="form">
+      <label>Путь к дампу ЕГРЮЛ (файл .xml, архив .zip или папка на сервере)</label>
+      <input name="egrul_path" placeholder="/data/egrul/  или  /data/egrul.zip" required>
+
+      <div class="row">
+        <div>
+          <label>Набор основных ОКВЭД</label>
+          <select name="okved_set">
+            {% for key, label in okved_sets.items() %}
+              <option value="{{ key }}" {% if key == default_set %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Обогащение контактами (checko)</label>
+          <select name="enrich" id="enrich">
+            <option value="api">API (нужен ключ)</option>
+            <option value="html">HTML (без ключа, медленно)</option>
+            <option value="none" selected>Без контактов (только ЕГРЮЛ)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>API-ключ checko (если режим API)</label>
+          <input name="api_key" placeholder="оставьте пустым → возьмётся из CHECKO_API_KEY">
+        </div>
+        <div>
+          <label>Пауза между запросами, сек</label>
+          <input name="delay" type="number" step="0.1" value="1.5">
+        </div>
+        <div>
+          <label>Лимит компаний (0 = без лимита)</label>
+          <input name="limit" type="number" value="0">
+        </div>
+      </div>
+
+      <div class="check">
+        <input type="checkbox" name="only_active" id="only_active" checked>
+        <label for="only_active" style="margin:0;">Только действующие</label>
+      </div>
+
+      <button type="submit" id="runbtn">Запустить парсинг</button>
+    </form>
+  </div>
+
+  <div class="card" id="resultcard" style="display:none;">
+    <div class="status">
+      Статус: <span class="pill" id="st">—</span>
+      &nbsp; Найдено: <b id="found">0</b>
+      &nbsp; <span class="muted">просмотрено записей ЕГРЮЛ: <span id="scanned">0</span></span>
+    </div>
+    <div id="downloads" style="display:none; margin-bottom:12px;">
+      <a class="dl" id="dlcsv" href="#">⬇ CSV</a>
+      <a class="dl" id="dlxlsx" href="#">⬇ Excel</a>
+      <span class="muted">(в таблице — первые 500 строк, в файлах — все)</span>
+    </div>
+    <div class="err" id="err"></div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th>Название</th><th>ИНН</th><th>Осн. ОКВЭД</th><th>Вид деятельности</th>
+          <th>Регион</th><th>Телефоны</th><th>Почты</th><th>Сайты</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+const form = document.getElementById('form');
+const runbtn = document.getElementById('runbtn');
+let timer = null;
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  runbtn.disabled = true;
+  document.getElementById('resultcard').style.display = 'block';
+  document.getElementById('rows').innerHTML = '';
+  document.getElementById('err').textContent = '';
+  document.getElementById('downloads').style.display = 'none';
+
+  const resp = await fetch('/start', { method: 'POST', body: new FormData(form) });
+  const data = await resp.json();
+  if (!resp.ok) {
+    document.getElementById('err').textContent = data.error || 'Ошибка запуска';
+    runbtn.disabled = false;
+    return;
+  }
+  poll(data.job_id);
+});
+
+function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function poll(jobId) {
+  if (timer) clearInterval(timer);
+  timer = setInterval(async () => {
+    const r = await fetch('/status/' + jobId);
+    if (!r.ok) return;
+    const s = await r.json();
+    document.getElementById('st').textContent = s.status;
+    document.getElementById('found').textContent = s.found;
+    document.getElementById('scanned').textContent = s.scanned;
+
+    const tbody = document.getElementById('rows');
+    tbody.innerHTML = s.rows.map(row => `<tr>
+      <td>${esc(row['Название'])}</td>
+      <td>${esc(row['ИНН'])}</td>
+      <td>${esc(row['Основной ОКВЭД'])}</td>
+      <td>${esc(row['Вид деятельности'])}</td>
+      <td>${esc(row['Регион'])}</td>
+      <td>${esc(row['Телефоны'])}</td>
+      <td>${esc(row['Почты'])}</td>
+      <td>${esc(row['Сайты'])}</td>
+    </tr>`).join('');
+
+    if (s.error) document.getElementById('err').textContent = s.error;
+
+    if (s.status === 'done' || s.status === 'error') {
+      clearInterval(timer);
+      runbtn.disabled = false;
+      if (s.has_files) {
+        document.getElementById('downloads').style.display = 'block';
+        document.getElementById('dlcsv').href = '/download/' + jobId + '.csv';
+        document.getElementById('dlxlsx').href = '/download/' + jobId + '.xlsx';
+      }
+    }
+  }, 1000);
+}
+</script>
+</body>
+</html>

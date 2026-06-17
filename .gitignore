@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# результаты прогонов и дампы
+/data/*.csv
+/data/*.xlsx
+/data/egrul/
+*.zip
+
+# выходные файлы CLI по умолчанию
+/companies.csv
+/companies.xlsx
