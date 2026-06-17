@@ -196,6 +196,35 @@ def download(job_id: str, fmt: str):
     return send_file(path, as_attachment=True, download_name=name)
 
 
+@app.route("/files")
+@login_required
+def files():
+    """Список готовых выгрузок (CSV/Excel) из папки data/."""
+    items = []
+    for fn in sorted(os.listdir(OUTPUT_DIR)):
+        if fn.lower().endswith((".csv", ".xlsx")):
+            fp = os.path.join(OUTPUT_DIR, fn)
+            items.append({
+                "name": fn,
+                "size": f"{os.path.getsize(fp) / 1024:.1f} КБ",
+                "mtime": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(fp))),
+            })
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+    return render_template("files.html", files=items)
+
+
+@app.route("/files/<path:name>")
+@login_required
+def files_download(name: str):
+    """Безопасная отдача файла из data/ (без выхода за пределы папки)."""
+    if "/" in name or "\\" in name or not name.lower().endswith((".csv", ".xlsx")):
+        abort(404)
+    path = os.path.normpath(os.path.join(OUTPUT_DIR, name))
+    if not path.startswith(os.path.normpath(OUTPUT_DIR) + os.sep) or not os.path.isfile(path):
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=name)
+
+
 if __name__ == "__main__":
     # HOST=0.0.0.0 — доступ снаружи; PORT — порт; FLASK_DEBUG=1 — отладка (НЕ для публичного IP)
     app.run(

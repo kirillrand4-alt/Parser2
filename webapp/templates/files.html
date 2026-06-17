@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Файлы — парсер компаний</title>
+  <style>
+    body { font-family: system-ui, Segoe UI, Roboto, sans-serif; margin:0; background:#0f172a; color:#e2e8f0; }
+    header { padding:18px 24px; background:#1e293b; border-bottom:1px solid #334155;
+      display:flex; justify-content:space-between; align-items:center; }
+    h1 { font-size:18px; margin:0; }
+    main { padding:24px; max-width:900px; margin:0 auto; }
+    a { color:#38bdf8; text-decoration:none; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { text-align:left; padding:10px 12px; border-bottom:1px solid #334155; }
+    th { color:#94a3b8; }
+    .muted { color:#94a3b8; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Готовые выгрузки</h1>
+  <div>
+    <a href="{{ request.script_root }}/">← к парсеру</a>
+    &nbsp;&nbsp;<a href="{{ request.script_root }}/logout">Выход →</a>
+  </div>
+</header>
+<main>
+  {% if not files %}
+    <p class="muted">Папка <code>data/</code> пуста. Запустите парсинг (через форму
+    или CLI с <code>--csv data/имя.csv --xlsx data/имя.xlsx</code>).</p>
+  {% else %}
+  <table>
+    <thead><tr><th>Файл</th><th>Размер</th><th>Изменён</th><th></th></tr></thead>
+    <tbody>
+      {% for f in files %}
+      <tr>
+        <td>{{ f.name }}</td>
+        <td class="muted">{{ f.size }}</td>
+        <td class="muted">{{ f.mtime }}</td>
+        <td><a href="{{ request.script_root }}/files/{{ f.name }}">⬇ скачать</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</main>
+</body>
+</html>
