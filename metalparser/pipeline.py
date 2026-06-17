@@ -126,6 +126,27 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
                 page += 1
 
 
+def count_companies(config: PipelineConfig, delay: float | None = None):
+    """Считает число компаний по каждому коду (через ЗапВсего в /v2/search),
+    НЕ скачивая сами компании. Возвращает (список (код, кол-во), всего).
+
+    Тратит по 1 лёгкому запросу поиска на код (× число регионов)."""
+    client = CheckoClient(api_key=config.api_key, prefer_api=True,
+                          delay=delay if delay is not None else config.delay)
+    codes = search_codes(_matcher(config).prefixes)
+    regions = config.regions or [None]
+    per: list[tuple[str, int]] = []
+    total = 0
+    for code in codes:
+        c = 0
+        for region in regions:
+            payload = client.search_page(code, region, config.only_active, 1)
+            c += client.extract_search_total(payload)
+        per.append((code, c))
+        total += c
+    return per, total
+
+
 def run(
     config: PipelineConfig,
     on_company: Callable[[Company], None] | None = None,

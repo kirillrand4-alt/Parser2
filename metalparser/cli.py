@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--csv", default="companies.csv", help="путь к CSV (по умолчанию: %(default)s)")
     p.add_argument("--xlsx", default="companies.xlsx", help="путь к Excel (по умолчанию: %(default)s)")
     p.add_argument("--no-xlsx", action="store_true", help="не создавать Excel")
+    p.add_argument("--count", action="store_true",
+                   help="только посчитать число компаний по каждому ОКВЭД (без скачивания, --source api)")
     return p
 
 
@@ -50,6 +52,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.source == "api" and not (args.api_key or __import__("os").environ.get("CHECKO_API_KEY")):
         print("Для --source api нужен ключ: --api-key или env CHECKO_API_KEY.", file=sys.stderr)
         return 2
+
+    if args.count:
+        from .pipeline import count_companies
+        cfg = PipelineConfig(source="api", okved_set=args.okved_set, extra_okved=args.okved,
+                             only_active=not args.all_statuses, api_key=args.api_key,
+                             regions=args.region, delay=args.delay)
+        per, total = count_companies(cfg, delay=min(args.delay, 0.3))
+        for code, n in per:
+            print(f"  {code}: {n}")
+        print(f"ВСЕГО: {total}")
+        return 0
 
     print(f"Источник: {args.source}", file=sys.stderr)
     print(f"Набор ОКВЭД: {OKVED_SET_LABELS.get(args.okved_set, args.okved_set)}", file=sys.stderr)

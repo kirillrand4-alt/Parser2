@@ -149,6 +149,19 @@ class CheckoClient:
         return resp.json()
 
     @staticmethod
+    def extract_search_total(payload: dict) -> int:
+        """Всего записей по запросу (поле ЗапВсего)."""
+        block = payload.get("data", payload) if isinstance(payload, dict) else {}
+        if isinstance(block, dict):
+            for k in ("ЗапВсего", "total", "Всего", "totalCount"):
+                v = block.get(k)
+                if isinstance(v, int):
+                    return v
+                if isinstance(v, str) and v.isdigit():
+                    return int(v)
+        return 0
+
+    @staticmethod
     def extract_search_records(payload: dict) -> list[dict]:
         """Достаёт список записей из ответа поиска (терпимо к ключам)."""
         node = payload

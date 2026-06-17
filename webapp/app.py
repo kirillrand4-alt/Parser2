@@ -35,7 +35,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from metalparser.export import write_csv, write_excel
 from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_CATALOG
-from metalparser.pipeline import PipelineConfig, run
+from metalparser.pipeline import PipelineConfig, run, count_companies
 
 app = Flask(__name__)
 # Работа за обратным прокси (nginx) — корректные схемы/префиксы для поддомена/пути
@@ -169,6 +169,30 @@ def start():
     }
     threading.Thread(target=_worker, args=(job_id, config), daemon=True).start()
     return jsonify({"job_id": job_id})
+
+
+@app.route("/count", methods=["POST"])
+@login_required
+def count():
+    """Считает число компаний по выбранным ОКВЭД без скачивания (поле ЗапВсего)."""
+    f = request.form
+    api_key = (f.get("api_key") or "").strip() or os.environ.get("CHECKO_API_KEY") or None
+    if not api_key:
+        return jsonify({"error": "Для подсчёта нужен ключ checko"}), 400
+    okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
+    if not okved_codes:
+        return jsonify({"error": "Выберите хотя бы один ОКВЭД"}), 400
+    regions = [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()]
+    config = PipelineConfig(
+        source="api", okved_set="none", extra_okved=okved_codes,
+        only_active=f.get("only_active", "on") == "on",
+        api_key=api_key, regions=regions,
+    )
+    try:
+        per, total = count_companies(config, delay=0.3)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 502
+    return jsonify({"per": [{"code": c, "count": n} for c, n in per], "total": total})
 
 
 @app.route("/status/<job_id>")

@@ -127,6 +127,10 @@
       </div>
 
       <button type="submit" id="runbtn">Запустить парсинг</button>
+      <button type="button" id="countbtn" style="background:#334155;color:#e2e8f0;margin-left:8px;">
+        Подсчитать (без скачивания)
+      </button>
+      <div id="countresult" class="muted" style="margin-top:12px;"></div>
     </form>
   </div>
 
@@ -191,6 +195,26 @@ document.querySelectorAll('.okved-class').forEach(cb => {
 const form = document.getElementById('form');
 const runbtn = document.getElementById('runbtn');
 let timer = null;
+
+// Подсчёт числа компаний без скачивания
+const countbtn = document.getElementById('countbtn');
+countbtn.addEventListener('click', async () => {
+  const out = document.getElementById('countresult');
+  countbtn.disabled = true;
+  out.textContent = 'Считаю…';
+  try {
+    const r = await fetch(BASE + '/count', { method: 'POST', body: new FormData(form) });
+    const d = await r.json();
+    if (!r.ok) { out.textContent = d.error || 'Ошибка'; }
+    else {
+      const lines = d.per.filter(x => x.count > 0)
+        .map(x => `${x.code}: ${x.count.toLocaleString('ru')}`).join('  ·  ');
+      out.innerHTML = `<b style="color:#38bdf8;">Всего: ${d.total.toLocaleString('ru')}</b>` +
+        (lines ? `<br><span>${lines}</span>` : '');
+    }
+  } catch (e) { out.textContent = 'Ошибка: ' + e; }
+  countbtn.disabled = false;
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
