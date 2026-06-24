@@ -5,6 +5,27 @@
 """
 from __future__ import annotations
 
+import json
+import os
+
+# Полный справочник ОКВЭД-2 (раздел → класс → группы XX.XX), собран из
+# открытого источника. Используется для выбора любого ОКВЭД в веб-форме и для
+# разворачивания префиксов в коды-группы при поиске через checko /v2/search.
+_OKVED2_PATH = os.path.join(os.path.dirname(__file__), "okved2.json")
+
+
+def _load_tree() -> list:
+    try:
+        with open(_OKVED2_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001 — справочник опционален
+        return []
+
+
+OKVED_TREE = _load_tree()
+# Все коды-группы (XX.XX) — уровень, по которому checko ищет точно.
+ALL_GROUP_CODES = [g["c"] for s in OKVED_TREE for c in s["cl"] for g in c["g"]]
+
 # Наборы префиксов основных ОКВЭД. Ключи используются в CLI (--okved-set).
 OKVED_SETS: dict[str, list[str]] = {
     # Ядро: металлургия + готовые металлоизделия/мехобработка + металлообр. станки
@@ -156,7 +177,8 @@ def search_codes(prefixes: list[str]) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
     matched: set[str] = set()
-    for code in METAL_GROUP_CODES:
+    catalog = ALL_GROUP_CODES or METAL_GROUP_CODES  # полный справочник, иначе металл
+    for code in catalog:
         for p in prefixes:
             if _matches_prefix(code, p):
                 matched.add(p)

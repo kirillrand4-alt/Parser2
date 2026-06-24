@@ -34,7 +34,7 @@ from flask import (
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from metalparser.export import write_csv, write_excel
-from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_CATALOG
+from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_TREE
 from metalparser.pipeline import PipelineConfig, run, count_companies
 
 app = Flask(__name__)
@@ -123,7 +123,7 @@ def _worker(job_id: str, config: PipelineConfig):
 def index():
     return render_template(
         "index.html",
-        catalog=OKVED_CATALOG,
+        tree=OKVED_TREE,
         default_set=DEFAULT_SET,
     )
 

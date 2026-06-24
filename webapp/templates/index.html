@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Парсер компаний — металлообработка (ЕГРЮЛ + checko)</title>
+  <title>Парсер компаний по ОКВЭД (ЕГРЮЛ + checko)</title>
   <style>
     :root { --bg:#0f172a; --card:#1e293b; --acc:#38bdf8; --txt:#e2e8f0; --mut:#94a3b8; }
     * { box-sizing: border-box; }
@@ -33,21 +33,23 @@
     .err { color:#fca5a5; }
     .muted { color:var(--mut); font-size:12px; }
     .okved-catalog { border:1px solid #475569; border-radius:8px; padding:8px 12px;
-      background:#0b1220; max-height:320px; overflow:auto; }
-    .okved-sec { padding:6px 0; border-bottom:1px solid #1e293b; }
-    .okved-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-    .chk { display:block; font-size:13px; color:var(--txt); margin:4px 0; font-weight:400; }
+      background:#0b1220; max-height:360px; overflow:auto; }
+    .chk { font-size:13px; color:var(--txt); margin:3px 0; font-weight:400; cursor:pointer; }
     .chk.strong, .strong { font-weight:600; }
     .chk input { width:auto; margin-right:6px; }
-    .okved-codes { padding:6px 0 6px 18px; }
-    .toggle { color:var(--acc); font-size:12px; text-decoration:none; white-space:nowrap; }
+    details.okv-sec > summary { padding:6px 0; cursor:pointer; color:#cbd5e1; }
+    details.okv-cls { margin:2px 0 2px 16px; }
+    details.okv-cls > summary { list-style:none; cursor:pointer; }
+    details.okv-cls > summary::-webkit-details-marker { display:none; }
+    .grps { padding:4px 0 6px 26px; display:flex; flex-direction:column; }
+    .grp { display:block; }
   </style>
 </head>
 <body>
 <header style="display:flex; justify-content:space-between; align-items:center;">
   <div>
-    <h1>Парсер компаний — металлообработка</h1>
-    <div class="sub">Источник списка: дамп ЕГРЮЛ ФНС · контакты: checko.ru · фильтр по основному ОКВЭД и статусу «Действующее»</div>
+    <h1>Парсер компаний по ОКВЭД</h1>
+    <div class="sub">Источник: API checko или дамп ЕГРЮЛ · контакты: checko.ru · фильтр по основному ОКВЭД и статусу «Действующее»</div>
   </div>
   <div style="font-size:13px;">
     <a href="{{ request.script_root }}/files" style="color:#38bdf8; text-decoration:none; margin-right:16px;">Файлы</a>
@@ -73,29 +75,35 @@
         <input name="regions" placeholder="напр. 77, 50, 66 — или оставьте пустым">
       </div>
 
-      <label>Основные ОКВЭД — отметьте классы или конкретные коды</label>
+      <label>Основные ОКВЭД — отметьте раздел, класс или конкретные коды</label>
+      <div style="display:flex; gap:8px; margin-bottom:6px;">
+        <input id="okvsearch" placeholder="поиск по коду или названию, напр. 25.62 или «обработка»" style="flex:1;">
+        <button type="button" id="metalbtn" style="background:#334155;color:#e2e8f0;white-space:nowrap;">Металлообработка</button>
+        <button type="button" id="clearokv" style="background:#334155;color:#e2e8f0;white-space:nowrap;">Сбросить</button>
+      </div>
       <div class="okved-catalog">
-        {% for sec in catalog %}
-        <div class="okved-sec">
-          <div class="okved-head">
-            {% if sec.prefix %}
-            <label class="chk strong">
-              <input type="checkbox" class="okved-class" name="okved_codes" value="{{ sec.prefix }}"
-                     data-sec="sec{{ loop.index }}"
-                     {% if sec.prefix in ['24','25','28.4'] %}checked{% endif %}>
-              {{ sec.title }} <span class="muted">(весь класс)</span>
-            </label>
-            {% else %}
-            <div class="strong">{{ sec.title }}</div>
-            {% endif %}
-            <a href="#" class="toggle" data-sec="sec{{ loop.index }}">показать коды ▾</a>
-          </div>
-          <div class="okved-codes" id="sec{{ loop.index }}" style="display:none;">
-            {% for code, name in sec.codes %}
-            <label class="chk"><input type="checkbox" name="okved_codes" value="{{ code }}"> {{ code }} — {{ name }}</label>
-            {% endfor %}
-          </div>
-        </div>
+        {% for sec in tree %}
+        <details class="okv-sec">
+          <summary class="strong">{{ sec.c }} — {{ sec.n }}</summary>
+          {% for cl in sec.cl %}
+          <details class="okv-cls" data-text="{{ cl.c }} {{ cl.n|lower }}">
+            <summary>
+              <label class="chk strong" onclick="event.stopPropagation()">
+                <input type="checkbox" class="cls-chk" name="okved_codes" value="{{ cl.c }}"
+                       data-cls="{{ cl.c }}"> {{ cl.c }} — {{ cl.n }} <span class="muted">(весь класс)</span>
+              </label>
+            </summary>
+            <div class="grps" data-cls="{{ cl.c }}">
+              {% for g in cl.g %}
+              <label class="chk grp" data-text="{{ g.c }} {{ g.n|lower }}">
+                <input type="checkbox" name="okved_codes" value="{{ g.c }}" data-grp="{{ cl.c }}">
+                {{ g.c }} — {{ g.n }}
+              </label>
+              {% endfor %}
+            </div>
+          </details>
+          {% endfor %}
+        </details>
         {% endfor %}
       </div>
 
@@ -172,24 +180,55 @@ function toggleSource() {
 sourceSel.addEventListener('change', toggleSource);
 toggleSource();
 
-// Каталог ОКВЭД: разворачивание секций
-document.querySelectorAll('.toggle').forEach(a => {
-  a.addEventListener('click', e => {
-    e.preventDefault();
-    const el = document.getElementById(a.dataset.sec);
-    const show = el.style.display === 'none';
-    el.style.display = show ? 'block' : 'none';
-    a.textContent = show ? 'скрыть коды ▴' : 'показать коды ▾';
+// Чекбоксы в summary не должны разворачивать <details>
+document.querySelectorAll('summary input[type=checkbox]')
+  .forEach(cb => cb.addEventListener('click', e => e.stopPropagation()));
+
+// Взаимное переключение «весь класс» ↔ конкретные коды
+document.querySelectorAll('.cls-chk').forEach(cb => {
+  const code = cb.dataset.cls;
+  const groups = () => document.querySelectorAll(`.grps[data-cls="${CSS.escape(code)}"] input[type=checkbox]`);
+  cb.addEventListener('change', () => { if (cb.checked) groups().forEach(g => g.checked = false); });
+  groups().forEach(g => g.addEventListener('change', () => { if (g.checked) cb.checked = false; }));
+});
+
+// Поиск по коду/названию: фильтрует классы и группы, раскрывает совпадения
+const okvsearch = document.getElementById('okvsearch');
+okvsearch.addEventListener('input', () => {
+  const t = okvsearch.value.trim().toLowerCase();
+  document.querySelectorAll('.okv-sec').forEach(sec => {
+    let secHit = false;
+    sec.querySelectorAll('.okv-cls').forEach(cls => {
+      const clsText = cls.dataset.text;
+      let grpHit = false;
+      cls.querySelectorAll('.grp').forEach(g => {
+        const gm = !t || g.dataset.text.includes(t) || clsText.includes(t);
+        g.style.display = gm ? '' : 'none';
+        if (t && gm) grpHit = true;
+      });
+      const clsShow = !t || clsText.includes(t) || grpHit;
+      cls.style.display = clsShow ? '' : 'none';
+      cls.open = !!t && (clsText.includes(t) || grpHit);
+      if (clsShow) secHit = true;
+    });
+    sec.style.display = secHit ? '' : 'none';
+    sec.open = !!t && secHit;
   });
 });
-// «Весь класс» отмечен → детальные коды отключаются (отправляется только префикс)
-document.querySelectorAll('.okved-class').forEach(cb => {
-  const sync = () => {
-    document.getElementById(cb.dataset.sec)
-      .querySelectorAll('input[type=checkbox]').forEach(c => { c.disabled = cb.checked; });
-  };
-  cb.addEventListener('change', sync);
-  sync();
+
+// Быстрый выбор металлообработки и сброс
+document.getElementById('metalbtn').addEventListener('click', () => {
+  document.querySelectorAll('input[name=okved_codes]').forEach(c => c.checked = false);
+  // классы 24 и 25 целиком + группы 28.41/28.49 (28.4 — подкласс, не класс)
+  document.querySelectorAll('input[name=okved_codes]').forEach(c => {
+    if (c.value === '24' || c.value === '25' || c.value === '28.41' || c.value === '28.49') {
+      c.checked = true;
+    }
+  });
+});
+document.getElementById('clearokv').addEventListener('click', () => {
+  document.querySelectorAll('input[name=okved_codes]').forEach(c => c.checked = false);
+  okvsearch.value = ''; okvsearch.dispatchEvent(new Event('input'));
 });
 
 const form = document.getElementById('form');

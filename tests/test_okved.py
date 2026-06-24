@@ -38,9 +38,12 @@ def test_search_codes_expansion():
 
 def test_search_codes_wide_and_custom():
     wide = search_codes(["46.72", "33.11"])
-    assert "46.72" in wide and "46.72.21" in wide and "33.11" in wide
-    # произвольный конкретный код вне справочника добавляется как есть
-    assert "62.01" in search_codes(["62.01"])
+    assert "46.72" in wide and "33.11" in wide
+    # любой класс разворачивается в свои группы из полного справочника ОКВЭД-2
+    it = search_codes(["62"])
+    assert "62.01" in it and "62.02" in it and "62" not in it
+    # произвольный код вне справочника добавляется как есть
+    assert "99.01" in search_codes(["99.01"]) or search_codes(["99.01"]) == ["99.01"]
 
 
 def test_resolve_prefixes_dedup():
