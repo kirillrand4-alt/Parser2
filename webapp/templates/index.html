@@ -39,8 +39,14 @@
     .chk input { width:auto; margin-right:6px; }
     details.okv-sec > summary { padding:6px 0; cursor:pointer; color:#cbd5e1; }
     details.okv-cls { margin:2px 0 2px 16px; }
-    details.okv-cls > summary { list-style:none; cursor:pointer; }
+    details.okv-cls > summary { list-style:none; cursor:pointer; display:flex;
+      align-items:center; gap:8px; padding:2px 0; }
     details.okv-cls > summary::-webkit-details-marker { display:none; }
+    .clsname { flex:1; }
+    .exp { font-size:11px; white-space:nowrap; }
+    .exp::before { content:'▸ '; }
+    details.okv-cls[open] > summary .exp { color:var(--acc); }
+    details.okv-cls[open] > summary .exp::before { content:'▾ '; }
     .grps { padding:4px 0 6px 26px; display:flex; flex-direction:column; }
     .grp { display:block; }
   </style>
@@ -88,10 +94,9 @@
           {% for cl in sec.cl %}
           <details class="okv-cls" data-text="{{ cl.c }} {{ cl.n|lower }}">
             <summary>
-              <label class="chk strong" onclick="event.stopPropagation()">
-                <input type="checkbox" class="cls-chk" name="okved_codes" value="{{ cl.c }}"
-                       data-cls="{{ cl.c }}"> {{ cl.c }} — {{ cl.n }} <span class="muted">(весь класс)</span>
-              </label>
+              <input type="checkbox" class="cls-chk" name="okved_codes" value="{{ cl.c }}" data-cls="{{ cl.c }}">
+              <span class="clsname"><b>{{ cl.c }}</b> — {{ cl.n }}</span>
+              <span class="exp muted">выбрать коды</span>
             </summary>
             <div class="grps" data-cls="{{ cl.c }}">
               {% for g in cl.g %}
