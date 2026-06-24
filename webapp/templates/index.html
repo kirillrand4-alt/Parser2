@@ -32,23 +32,33 @@
     a.dl { color:var(--acc); margin-right:16px; text-decoration:none; font-weight:600; }
     .err { color:#fca5a5; }
     .muted { color:var(--mut); font-size:12px; }
-    .okved-catalog { border:1px solid #475569; border-radius:8px; padding:8px 12px;
+    /* чекбоксы не должны растягиваться глобальным правилом input{width:100%} */
+    input[type=checkbox], input[type=radio] { width:auto; flex:0 0 auto; margin:0; }
+    .okved-catalog { border:1px solid #475569; border-radius:8px; padding:6px 6px;
       background:#0b1220; max-height:360px; overflow:auto; }
-    .chk { font-size:13px; color:var(--txt); margin:3px 0; font-weight:400; cursor:pointer; }
+    .chk { font-size:13px; color:var(--txt); margin:0; font-weight:400; cursor:pointer; }
     .chk.strong, .strong { font-weight:600; }
-    .chk input { width:auto; margin-right:6px; }
-    details.okv-sec > summary { padding:6px 0; cursor:pointer; color:#cbd5e1; }
-    details.okv-cls { margin:2px 0 2px 16px; }
+    /* раздел */
+    details.okv-sec { border-bottom:1px solid #1e293b; }
+    details.okv-sec > summary { padding:8px 8px; cursor:pointer; color:#cbd5e1; font-weight:600; }
+    details.okv-sec > summary:hover { background:#13203a; border-radius:6px; }
+    /* класс */
+    details.okv-cls { margin:0 0 0 14px; }
     details.okv-cls > summary { list-style:none; cursor:pointer; display:flex;
-      align-items:center; gap:8px; padding:2px 0; }
+      align-items:center; gap:8px; padding:5px 8px; border-radius:6px; }
+    details.okv-cls > summary:hover { background:#13203a; }
     details.okv-cls > summary::-webkit-details-marker { display:none; }
-    .clsname { flex:1; }
-    .exp { font-size:11px; white-space:nowrap; }
+    .clsname { flex:1 1 auto; min-width:0; line-height:1.3; }
+    .clsname b { color:var(--acc); font-weight:600; margin-right:2px; }
+    .exp { flex:0 0 auto; font-size:11px; white-space:nowrap; color:var(--mut);
+      border:1px solid #334155; border-radius:999px; padding:1px 9px; }
+    details.okv-cls[open] > summary .exp { color:var(--acc); border-color:var(--acc); }
     .exp::before { content:'▸ '; }
-    details.okv-cls[open] > summary .exp { color:var(--acc); }
     details.okv-cls[open] > summary .exp::before { content:'▾ '; }
-    .grps { padding:4px 0 6px 26px; display:flex; flex-direction:column; }
-    .grp { display:block; }
+    /* группы внутри класса */
+    .grps { padding:2px 0 8px 40px; display:grid; gap:2px 18px;
+      grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); }
+    .grp { display:flex; align-items:center; gap:8px; padding:2px 0; }
   </style>
 </head>
 <body>
