@@ -163,11 +163,17 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
             while page <= MAX_SEARCH_PAGES:
                 try:
                     payload = client.search_page(query, region, config.only_active, page)
-                except Exception as exc:  # noqa: BLE001 — напр. 403 (пагинация вне тарифа)
-                    is403 = "403" in str(exc)
-                    print(f"  [api] {query} стр.{page}: {'403 — глубокая пагинация недоступна на тарифе' if is403 else exc}. "
-                          f"Беру только доступное по этому коду.", file=sys.stderr)
+                except Exception as exc:  # noqa: BLE001 — напр. 403 (лимит/пагинация вне тарифа)
+                    print(f"  [api] {query} стр.{page}: {exc}. Беру только доступное по этому коду.",
+                          file=sys.stderr)
                     break
+                # Ошибка API в теле ответа (напр. суточный лимит бесплатного тарифа)
+                meta = payload.get("meta") if isinstance(payload, dict) else None
+                if isinstance(meta, dict) and str(meta.get("status")).lower() == "error":
+                    print(f"  [api] checko: {meta.get('message', 'ошибка')} "
+                          f"(запросов сегодня: {meta.get('today_request_count')}). Останавливаюсь.",
+                          file=sys.stderr)
+                    return
                 records = client.extract_search_records(payload)
                 if not records:
                     break
