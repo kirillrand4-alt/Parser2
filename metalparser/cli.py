@@ -7,9 +7,9 @@ import os
 import sys
 import time
 
-from .export import write_csv, write_excel
+from .export import write_excel_from_csv, CsvAppender, read_existing_keys
 from .okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET
-from .pipeline import PipelineConfig, run
+from .pipeline import PipelineConfig, iter_run
 
 _SECRETS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "secrets.json")
 
@@ -107,29 +107,44 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     start = time.monotonic()
-    found = [0]
-
-    def on_company(c):
-        found[0] += 1
-        if found[0] % 50 == 0:
-            print(f"  найдено: {found[0]}", file=sys.stderr)
 
     def on_progress(n):
-        label = "найдено через API" if args.source == "api" else "просмотрено записей ЕГРЮЛ"
-        print(f"  {label}: {n}", file=sys.stderr)
+        if args.source == "api":
+            print(f"  найдено через API: {n}", file=sys.stderr)
+        elif args.source == "site":
+            print(f"  собрано через сайт: {n}", file=sys.stderr)
+        else:
+            print(f"  просмотрено записей ЕГРЮЛ: {n}", file=sys.stderr)
 
-    companies = run(config, on_company=on_company, on_progress=on_progress)
+    # Докачка: пропускаем уже собранные (по существующему CSV) для source=site
+    skip = read_existing_keys(args.csv) if args.source == "site" else set()
+    if skip:
+        print(f"Докачка: в {args.csv} уже {len(skip)} компаний — пропускаю их.", file=sys.stderr)
 
-    n_csv = write_csv(companies, args.csv)
-    print(f"CSV: {args.csv} ({n_csv} строк)", file=sys.stderr)
+    # Потоковая запись: каждая компания сразу в CSV (не теряется при остановке)
+    appender = CsvAppender(args.csv)
+    companies = []
+    try:
+        for c in iter_run(config, on_progress=on_progress, skip=skip):
+            appender.write(c)
+            companies.append(c)
+            if len(companies) % 25 == 0:
+                print(f"  записано: {len(companies)}", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("\nОстановлено вручную — собранное сохранено в CSV.", file=sys.stderr)
+    finally:
+        appender.close()
+
+    total_in_csv = len(read_existing_keys(args.csv))
+    print(f"CSV: {args.csv} (всего {total_in_csv} компаний)", file=sys.stderr)
     if not args.no_xlsx:
-        n_xlsx = write_excel(companies, args.xlsx)
+        n_xlsx = write_excel_from_csv(args.csv, args.xlsx)
         print(f"Excel: {args.xlsx} ({n_xlsx} строк)", file=sys.stderr)
 
     enriched = sum(1 for c in companies if c.enriched and not c.enrich_error)
     errors = sum(1 for c in companies if c.enrich_error)
-    print(f"Готово за {time.monotonic() - start:.1f} c. Компаний: {len(companies)}; "
-          f"с контактами: {enriched}; ошибок обогащения: {errors}", file=sys.stderr)
+    print(f"Готово за {time.monotonic() - start:.1f} c. За этот запуск: {len(companies)}; "
+          f"с контактами: {enriched}; ошибок: {errors}", file=sys.stderr)
     return 0
 
 

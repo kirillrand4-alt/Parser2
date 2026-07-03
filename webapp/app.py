@@ -34,9 +34,9 @@ from flask import (
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from metalparser.export import write_csv, write_excel
+from metalparser.export import CsvAppender, write_excel_from_csv
 from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_TREE
-from metalparser.pipeline import PipelineConfig, run, count_companies
+from metalparser.pipeline import PipelineConfig, iter_run, count_companies
 
 app = Flask(__name__)
 # Работа за обратным прокси (nginx) — корректные схемы/префиксы для поддомена/пути
@@ -124,29 +124,39 @@ def logout():
 
 def _worker(job_id: str, config: PipelineConfig):
     job = JOBS[job_id]
+    csv_path = os.path.join(OUTPUT_DIR, f"{job_id}.csv")
+    xlsx_path = os.path.join(OUTPUT_DIR, f"{job_id}.xlsx")
+    appender = CsvAppender(csv_path)   # потоковая запись — результат не теряется
     try:
-        def on_company(c):
-            with _LOCK:
-                job["found"] += 1
-                job["rows"].append(c.to_row())
-
         def on_progress(scanned):
             with _LOCK:
                 job["scanned"] = scanned
 
-        companies = run(config, on_company=on_company, on_progress=on_progress)
-
-        csv_path = os.path.join(OUTPUT_DIR, f"{job_id}.csv")
-        xlsx_path = os.path.join(OUTPUT_DIR, f"{job_id}.xlsx")
-        write_csv(companies, csv_path)
-        write_excel(companies, xlsx_path)
+        # пишем каждую компанию сразу и в файл, и в таблицу
+        for c in iter_run(config, on_progress=on_progress):
+            appender.write(c)
+            with _LOCK:
+                job["found"] += 1
+                if len(job["rows"]) < 500:
+                    job["rows"].append(c.to_row())
+        appender.close()
+        write_excel_from_csv(csv_path, xlsx_path)
         with _LOCK:
             job["csv"] = csv_path
             job["xlsx"] = xlsx_path
             job["status"] = "done"
             job["finished"] = time.time()
     except Exception as exc:  # noqa: BLE001
+        appender.close()
+        # сохраняем то, что успели собрать
+        try:
+            write_excel_from_csv(csv_path, xlsx_path)
+        except Exception:  # noqa: BLE001
+            pass
         with _LOCK:
+            if os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+                job["csv"] = csv_path
+                job["xlsx"] = xlsx_path
             job["status"] = "error"
             job["error"] = f"{type(exc).__name__}: {exc}"
 

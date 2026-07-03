@@ -83,3 +83,29 @@ def test_iter_site_all_statuses(monkeypatch):
     cfg = PipelineConfig(source="site", okved_set="none", extra_okved=["25.62"],
                          cookie="x", delay=0, only_active=False)
     assert {c.inn for c in run(cfg)} == {"111", "222", "333"}
+
+
+def test_iter_site_resume_skip(monkeypatch):
+    monkeypatch.setattr(site, "CheckoSiteClient", FakeSiteClient)
+    cfg = PipelineConfig(source="site", okved_set="none", extra_okved=["25.62"],
+                         cookie="x", delay=0, only_active=True)
+    # 111 уже собран ранее -> пропускаем; 222 ликвидирована -> отсев; остаётся 333
+    got = {c.inn for c in run(cfg, skip={"111"})}
+    assert got == {"333"}
+
+
+def test_csv_appender_resume(tmp_path):
+    from metalparser.export import CsvAppender, read_existing_keys
+    from metalparser.models import Company
+    p = str(tmp_path / "out.csv")
+    a = CsvAppender(p)
+    a.write(Company(inn="111", name="A"))
+    a.close()
+    assert read_existing_keys(p) == {"111"}
+    # дозапись не дублирует заголовок
+    a2 = CsvAppender(p)
+    a2.write(Company(inn="222", name="B"))
+    a2.close()
+    assert read_existing_keys(p) == {"111", "222"}
+    with open(p, encoding="utf-8-sig") as f:
+        assert f.read().count("ИНН;ОГРН") == 1

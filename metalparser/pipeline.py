@@ -53,24 +53,33 @@ def _matcher(config: PipelineConfig) -> OkvedMatcher:
 def iter_run(
     config: PipelineConfig,
     on_progress: Callable[[int], None] | None = None,
+    skip: set | None = None,
 ) -> Iterator[Company]:
-    """Отдаёт подходящие компании по мере готовности (с контактами)."""
+    """Отдаёт подходящие компании по мере готовности (с контактами).
+
+    skip — уже собранные ИНН/ОГРН (докачка, актуально для source='site')."""
     if config.source == "api":
         yield from _iter_api(config, on_progress)
     elif config.source == "site":
-        yield from _iter_site(config, on_progress)
+        yield from _iter_site(config, on_progress, skip=skip)
     else:
         yield from _iter_egrul(config, on_progress)
 
 
-def _iter_site(config: PipelineConfig, on_progress) -> Iterator[Company]:
-    """Сбор через сайт checko (HTML): каталог по ОКВЭД -> карточки -> контакты."""
+def _iter_site(config: PipelineConfig, on_progress, skip: set | None = None) -> Iterator[Company]:
+    """Сбор через сайт checko (HTML): каталог по ОКВЭД -> карточки -> контакты.
+
+    skip — множество уже собранных ИНН/ОГРН (для докачки: пропустить их)."""
+    import sys
     from .site import CheckoSiteClient
     matcher = _matcher(config)
     client = CheckoSiteClient(cookie=config.cookie, delay=config.delay)
     codes = search_codes(matcher.prefixes)     # каталог тоже по коду-группе
+    skip = skip or set()
     seen: set[str] = set()
     count = 0
+    fails = 0                                   # подряд идущих ошибок (429/блок)
+    MAX_FAILS = 15
     for code in codes:
         page = 1
         while page <= MAX_SEARCH_PAGES:
@@ -78,15 +87,23 @@ def _iter_site(config: PipelineConfig, on_progress) -> Iterator[Company]:
                 ogrns = client.catalog_ogrns(code, page)
             except Exception:  # noqa: BLE001 — страница недоступна/блок, к следующему коду
                 break
-            fresh = [o for o in ogrns if o not in seen]
+            fresh = [o for o in ogrns if o not in seen and o not in skip]
             for o in ogrns:
                 seen.add(o)
             for ogrn in fresh:
                 try:
                     comp = client.card(ogrn, okved_code=code)
+                    fails = 0
                 except Exception as exc:  # noqa: BLE001
+                    fails += 1
                     comp = Company(ogrn=ogrn, okved_code=code,
                                    enrich_source="site", enrich_error=f"{type(exc).__name__}: {exc}")
+                    if fails >= MAX_FAILS:
+                        print(f"  [site] {fails} ошибок подряд — сайт блокирует запросы, "
+                              f"останавливаюсь (собрано {count}). Повторите позже — докачает остальных.",
+                              file=sys.stderr)
+                        yield comp
+                        return
                 if config.only_active and comp.status and not _is_active_status(comp.status):
                     continue
                 yield comp
@@ -191,10 +208,11 @@ def run(
     config: PipelineConfig,
     on_company: Callable[[Company], None] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    skip: set | None = None,
 ) -> list[Company]:
     """Прогоняет пайплайн и возвращает список компаний."""
     results: list[Company] = []
-    for company in iter_run(config, on_progress=on_progress):
+    for company in iter_run(config, on_progress=on_progress, skip=skip):
         results.append(company)
         if on_company:
             on_company(company)
