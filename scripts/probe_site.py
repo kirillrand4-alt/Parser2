@@ -48,6 +48,8 @@ def main():
     ap.add_argument("--code", default="25.62", help="код ОКВЭД для каталога")
     ap.add_argument("--page", type=int, default=1)
     ap.add_argument("--inn", default=None, help="проверить карточку по ИНН/ОГРН напрямую")
+    ap.add_argument("--cookie", default=os.environ.get("CHECKO_COOKIE"),
+                    help="строка Cookie авторизованного аккаунта (или env CHECKO_COOKIE)")
     args = ap.parse_args()
 
     sess = requests.Session()
@@ -56,6 +58,9 @@ def main():
         "Accept-Language": "ru,en;q=0.8",
         "Accept": "text/html,application/xhtml+xml",
     })
+    if args.cookie:
+        sess.headers["Cookie"] = args.cookie.strip()
+        print("[i] использую переданные куки авторизации\n")
 
     print("===== КАТАЛОГ =====")
     company_links = []
