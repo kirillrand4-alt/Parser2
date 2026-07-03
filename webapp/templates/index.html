@@ -83,8 +83,15 @@
       </select>
 
       <div id="site_block" style="display:none;">
-        <label>Куки авторизованного аккаунта checko (строка Cookie)</label>
-        <input name="cookie" placeholder="оставьте пустым → возьмётся из CHECKO_COOKIE на сервере">
+        <label>Куки авторизованного аккаунта checko (строка Cookie)
+          {% if cookie_saved %}<span style="color:#4ade80;">— сохранены ✓</span>{% endif %}
+        </label>
+        <div style="display:flex; gap:8px;">
+          <input name="cookie" id="cookie_input" style="flex:1;"
+                 placeholder="{% if cookie_saved %}уже сохранены — оставьте пустым или вставьте новые{% else %}вставьте строку Cookie{% endif %}">
+          <button type="button" class="savebtn" data-field="cookie" style="background:#334155;color:#e2e8f0;white-space:nowrap;">💾 Сохранить</button>
+        </div>
+        <div class="muted savehint" data-for="cookie"></div>
       </div>
 
       <div id="egrul_block" style="display:none;">
@@ -137,8 +144,15 @@
 
       <div class="row">
         <div>
-          <label>API-ключ checko (если режим API)</label>
-          <input name="api_key" placeholder="оставьте пустым → возьмётся из CHECKO_API_KEY">
+          <label>API-ключ checko (если режим API)
+            {% if key_saved %}<span style="color:#4ade80;">— сохранён ✓</span>{% endif %}
+          </label>
+          <div style="display:flex; gap:6px;">
+            <input name="api_key" id="api_key_input" style="flex:1;"
+                   placeholder="{% if key_saved %}сохранён — можно пусто{% else %}ключ API{% endif %}">
+            <button type="button" class="savebtn" data-field="api_key" style="background:#334155;color:#e2e8f0;white-space:nowrap;margin:0;padding:9px 10px;">💾</button>
+          </div>
+          <div class="muted savehint" data-for="api_key"></div>
         </div>
         <div>
           <label>Пауза между запросами, сек</label>
@@ -256,6 +270,26 @@ document.getElementById('clearokv').addEventListener('click', () => {
 const form = document.getElementById('form');
 const runbtn = document.getElementById('runbtn');
 let timer = null;
+
+// Сохранение кук / ключа на сервере (в data/secrets.json)
+document.querySelectorAll('.savebtn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const field = btn.dataset.field;
+    const input = document.getElementById(field === 'cookie' ? 'cookie_input' : 'api_key_input');
+    const hint = document.querySelector(`.savehint[data-for="${field}"]`);
+    const val = (input.value || '').trim();
+    if (!val) { hint.textContent = 'Вставьте значение перед сохранением'; return; }
+    btn.disabled = true; hint.textContent = 'Сохраняю…';
+    try {
+      const fd = new FormData(); fd.append(field, val);
+      const r = await fetch(BASE + '/save-secret', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (r.ok) { hint.innerHTML = '<span style="color:#4ade80;">Сохранено ✓ — поле можно очистить</span>'; input.value = ''; }
+      else hint.textContent = d.error || 'Ошибка';
+    } catch (e) { hint.textContent = 'Ошибка: ' + e; }
+    btn.disabled = false;
+  });
+});
 
 // Подсчёт числа компаний без скачивания
 const countbtn = document.getElementById('countbtn');

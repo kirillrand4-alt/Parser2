@@ -10,6 +10,11 @@ venv/
 /data/egrul/
 *.zip
 
+# сохранённые секреты (куки/ключ) — НЕ коммитить
+/data/secrets.json
+company.html
+catalog_*.html
+
 # выходные файлы CLI по умолчанию
 /companies.csv
 /companies.xlsx

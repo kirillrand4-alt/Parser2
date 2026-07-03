@@ -2,12 +2,25 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import time
 
 from .export import write_csv, write_excel
 from .okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET
 from .pipeline import PipelineConfig, run
+
+_SECRETS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "secrets.json")
+
+
+def _saved(key: str) -> str | None:
+    """Сохранённый секрет из data/secrets.json (общий с веб-интерфейсом)."""
+    try:
+        with open(_SECRETS_PATH, encoding="utf-8") as fh:
+            return json.load(fh).get(key)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,20 +61,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    api_key = args.api_key or os.environ.get("CHECKO_API_KEY") or _saved("api_key")
+    cookie = args.cookie or os.environ.get("CHECKO_COOKIE") or _saved("cookie")
+
     if args.source == "egrul" and not args.egrul_path:
         print("Для --source egrul укажите путь к дампу ЕГРЮЛ.", file=sys.stderr)
         return 2
-    if args.source == "api" and not (args.api_key or __import__("os").environ.get("CHECKO_API_KEY")):
-        print("Для --source api нужен ключ: --api-key или env CHECKO_API_KEY.", file=sys.stderr)
+    if args.source == "api" and not api_key:
+        print("Для --source api нужен ключ: --api-key, env CHECKO_API_KEY или сохранённый.", file=sys.stderr)
         return 2
-    if args.source == "site" and not (args.cookie or __import__("os").environ.get("CHECKO_COOKIE")):
+    if args.source == "site" and not cookie:
         print("ВНИМАНИЕ: --source site без кук — контакты могут быть скрыты. "
-              "Задайте --cookie или env CHECKO_COOKIE.", file=sys.stderr)
+              "Задайте --cookie, env CHECKO_COOKIE или сохраните через веб.", file=sys.stderr)
 
     if args.count:
         from .pipeline import count_companies
         cfg = PipelineConfig(source="api", okved_set=args.okved_set, extra_okved=args.okved,
-                             only_active=not args.all_statuses, api_key=args.api_key,
+                             only_active=not args.all_statuses, api_key=api_key,
                              regions=args.region, delay=args.delay)
         per, total = count_companies(cfg, delay=min(args.delay, 0.3))
         for code, n in per:
@@ -82,8 +98,8 @@ def main(argv: list[str] | None = None) -> int:
         extra_okved=args.okved,
         only_active=not args.all_statuses,
         enrich=not args.no_enrich,
-        api_key=args.api_key,
-        cookie=args.cookie or __import__("os").environ.get("CHECKO_COOKIE"),
+        api_key=api_key,
+        cookie=cookie,
         prefer_api=not args.html,
         delay=args.delay,
         limit=args.limit,

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import functools
+import json
 import os
 import secrets
 import threading
@@ -48,6 +49,38 @@ PARSER_PASSWORD = os.environ.get("PARSER_PASSWORD", "")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Сохранённые секреты (куки/ключ) — файл в data/, в git не попадает.
+SECRETS_PATH = os.path.join(OUTPUT_DIR, "secrets.json")
+
+
+def load_saved() -> dict:
+    try:
+        with open(SECRETS_PATH, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_saved(**kv) -> None:
+    data = load_saved()
+    for k, v in kv.items():
+        if v:
+            data[k] = v
+    with open(SECRETS_PATH, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False)
+    try:
+        os.chmod(SECRETS_PATH, 0o600)  # на Windows может игнорироваться — не критично
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def resolve_cookie(form_val: str | None) -> str | None:
+    return (form_val or "").strip() or load_saved().get("cookie") or os.environ.get("CHECKO_COOKIE") or None
+
+
+def resolve_api_key(form_val: str | None) -> str | None:
+    return (form_val or "").strip() or load_saved().get("api_key") or os.environ.get("CHECKO_API_KEY") or None
 
 # Состояние задач в памяти (один процесс). job_id -> dict
 JOBS: dict[str, dict] = {}
@@ -121,11 +154,28 @@ def _worker(job_id: str, config: PipelineConfig):
 @app.route("/")
 @login_required
 def index():
+    saved = load_saved()
     return render_template(
         "index.html",
         tree=OKVED_TREE,
         default_set=DEFAULT_SET,
+        cookie_saved=bool(saved.get("cookie") or os.environ.get("CHECKO_COOKIE")),
+        key_saved=bool(saved.get("api_key") or os.environ.get("CHECKO_API_KEY")),
     )
+
+
+@app.route("/save-secret", methods=["POST"])
+@login_required
+def save_secret():
+    """Сохраняет куки и/или API-ключ в data/secrets.json (не в git)."""
+    cookie = (request.form.get("cookie") or "").strip()
+    api_key = (request.form.get("api_key") or "").strip()
+    if not cookie and not api_key:
+        return jsonify({"error": "Нечего сохранять — вставьте куки или ключ"}), 400
+    save_saved(cookie=cookie, api_key=api_key)
+    return jsonify({"saved": True,
+                    "cookie": bool(load_saved().get("cookie")),
+                    "api_key": bool(load_saved().get("api_key"))})
 
 
 @app.route("/start", methods=["POST"])
@@ -134,8 +184,8 @@ def start():
     f = request.form
     source = f.get("source", "api")             # api | site | egrul
     egrul_path = (f.get("egrul_path") or "").strip()
-    api_key = (f.get("api_key") or "").strip() or os.environ.get("CHECKO_API_KEY") or None
-    cookie = (f.get("cookie") or "").strip() or os.environ.get("CHECKO_COOKIE") or None
+    api_key = resolve_api_key(f.get("api_key"))
+    cookie = resolve_cookie(f.get("cookie"))
     regions = [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()]
 
     if source == "egrul":
@@ -180,7 +230,7 @@ def start():
 def count():
     """Считает число компаний по выбранным ОКВЭД без скачивания (поле ЗапВсего)."""
     f = request.form
-    api_key = (f.get("api_key") or "").strip() or os.environ.get("CHECKO_API_KEY") or None
+    api_key = resolve_api_key(f.get("api_key"))
     if not api_key:
         return jsonify({"error": "Для подсчёта нужен ключ checko"}), 400
     okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
