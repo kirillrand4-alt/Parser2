@@ -149,6 +149,7 @@ def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
 
 
 def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
+    import sys
     matcher = _matcher(config)
     client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay)
     # checko /v2/search ищет по точному коду-группе → разворачиваем префиксы
@@ -160,7 +161,13 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
         for query in queries:
             page = 1
             while page <= MAX_SEARCH_PAGES:
-                payload = client.search_page(query, region, config.only_active, page)
+                try:
+                    payload = client.search_page(query, region, config.only_active, page)
+                except Exception as exc:  # noqa: BLE001 — напр. 403 (пагинация вне тарифа)
+                    is403 = "403" in str(exc)
+                    print(f"  [api] {query} стр.{page}: {'403 — глубокая пагинация недоступна на тарифе' if is403 else exc}. "
+                          f"Беру только доступное по этому коду.", file=sys.stderr)
+                    break
                 records = client.extract_search_records(payload)
                 if not records:
                     break
@@ -209,8 +216,11 @@ def count_companies(config: PipelineConfig, delay: float | None = None):
     for code in codes:
         c = 0
         for region in regions:
-            payload = client.search_page(code, region, config.only_active, 1)
-            c += client.extract_search_total(payload)
+            try:
+                payload = client.search_page(code, region, config.only_active, 1)
+                c += client.extract_search_total(payload)
+            except Exception:  # noqa: BLE001 — код недоступен на тарифе/ошибка
+                pass
         per.append((code, c))
         total += c
     return per, total
