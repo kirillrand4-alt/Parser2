@@ -23,14 +23,20 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from metalparser.checko import extract_contacts_from_html, DEFAULT_UA  # noqa: E402
 
+# checko кодирует ОКВЭД шестизначным числом без точек:
+# класс 01 -> 010000, группа 25.62 -> 256200, 28.41 -> 284100.
+def code6(dotted: str) -> str:
+    digits = dotted.replace(".", "")
+    return (digits + "000000")[:6]
+
+
 # Кандидаты URL каталога по коду ОКВЭД (проверим по очереди)
 CATALOG_URLS = [
-    "https://checko.ru/company/select?code={code}&page={page}",
-    "https://checko.ru/company/select?code={code}",
-    "https://checko.ru/okved/{code}?page={page}",
+    "https://checko.ru/company/select?code={code6}&page={page}",
+    "https://checko.ru/company/select?code={code6}",
 ]
 
-OGRN_RE = re.compile(r'href="(/company/[^"]*?(\d{13}))"')
+OGRN_RE = re.compile(r'href="(/company/[^"]*?-(\d{13}))"')
 INN_RE = re.compile(r'\b(\d{10}|\d{12})\b')
 
 
@@ -62,10 +68,11 @@ def main():
         sess.headers["Cookie"] = args.cookie.strip()
         print("[i] использую переданные куки авторизации\n")
 
-    print("===== КАТАЛОГ =====")
+    c6 = code6(args.code)
+    print(f"===== КАТАЛОГ ===== (код {args.code} -> {c6})")
     company_links = []
     for tmpl in CATALOG_URLS:
-        url = tmpl.format(code=args.code, page=args.page)
+        url = tmpl.format(code6=c6, page=args.page)
         r = fetch(sess, url)
         if r is None:
             continue
@@ -73,7 +80,8 @@ def main():
         if r.status_code != 200:
             print("  (пропускаю, не 200)")
             continue
-        with open(f"catalog_{args.code}_{args.page}.html", "w", encoding="utf-8") as f:
+        fname = f"catalog_{c6}_{args.page}.html"
+        with open(fname, "w", encoding="utf-8") as f:
             f.write(r.text)
         links = OGRN_RE.findall(r.text)
         uniq = []
@@ -82,14 +90,22 @@ def main():
             if ogrn not in seen:
                 seen.add(ogrn)
                 uniq.append((href, ogrn))
-        print(f"  найдено ссылок на компании: {len(uniq)} (сохранено в catalog_{args.code}_{args.page}.html)")
+        print(f"  найдено ссылок на компании: {len(uniq)} (сохранено в {fname})")
         for href, ogrn in uniq[:10]:
             print(f"    ОГРН {ogrn}  ->  {href}")
+        # сколько всего найдено (текст вида «Найдено 6 541 организаций»)
+        m = re.search(r"[Нн]айден[оа]?[^<]{0,40}", r.text)
+        if m:
+            print("  счётчик:", re.sub(r"\s+", " ", m.group(0))[:120])
+        # пагинация
+        pages = sorted({int(p) for p in re.findall(r"[?&]page=(\d+)", r.text)})
+        if pages:
+            print("  page= в ссылках:", pages[:15], "… max:", max(pages))
         if uniq:
             company_links = uniq
             break
         else:
-            print("  ССЫЛКИ НЕ НАЙДЕНЫ — пришлите фрагмент HTML, где перечислены компании")
+            print("  ССЫЛКИ НЕ НАЙДЕНЫ — запустите analyze_catalog.py на", fname)
 
     print("\n===== КАРТОЧКА КОМПАНИИ =====")
     target = args.inn
