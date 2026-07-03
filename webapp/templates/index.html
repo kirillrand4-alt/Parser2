@@ -14,8 +14,9 @@
     main { padding:24px; max-width:1200px; margin:0 auto; }
     .card { background:var(--card); border:1px solid #334155; border-radius:12px; padding:18px; margin-bottom:18px; }
     label { display:block; font-size:13px; color:var(--mut); margin:10px 0 4px; }
-    input, select { width:100%; padding:9px 10px; border-radius:8px; border:1px solid #475569;
-      background:#0b1220; color:var(--txt); font-size:14px; }
+    input, select, textarea { width:100%; padding:9px 10px; border-radius:8px; border:1px solid #475569;
+      background:#0b1220; color:var(--txt); font-size:14px; font-family:inherit; box-sizing:border-box; }
+    textarea { resize:vertical; }
     .row { display:flex; gap:16px; flex-wrap:wrap; }
     .row > div { flex:1; min-width:180px; }
     .check { display:flex; align-items:center; gap:8px; margin-top:14px; }
@@ -138,6 +139,10 @@
         </details>
         {% endfor %}
       </div>
+
+      <label>Или впишите коды ОКВЭД через запятую (можно вместо галочек, объединяется с отмеченными)</label>
+      <textarea name="okved_text" rows="2"
+        placeholder="напр. 25.62, 25.61, 28.41, 25.30.1, 10.11, 46.72"></textarea>
 
       <label>Обогащение контактами (checko)</label>
       <select name="enrich" id="enrich">

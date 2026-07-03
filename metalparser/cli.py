@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 
@@ -66,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
     api_key = args.api_key or os.environ.get("CHECKO_API_KEY") or _saved("api_key")
     cookie = args.cookie or os.environ.get("CHECKO_COOKIE") or _saved("cookie")
 
+    # --okved можно передавать списком через запятую/пробел
+    extra_okved = []
+    for item in args.okved:
+        extra_okved += [t.strip() for t in re.split(r"[,\s;]+", item) if t.strip()]
+
     if args.source == "egrul" and not args.egrul_path:
         print("Для --source egrul укажите путь к дампу ЕГРЮЛ.", file=sys.stderr)
         return 2
@@ -79,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.count:
         from .pipeline import count_companies
-        cfg = PipelineConfig(source="api", okved_set=args.okved_set, extra_okved=args.okved,
+        cfg = PipelineConfig(source="api", okved_set=args.okved_set, extra_okved=extra_okved,
                              only_active=not args.all_statuses, api_key=api_key,
                              regions=args.region, delay=args.delay)
         per, total = count_companies(cfg, delay=min(args.delay, 0.3))
@@ -90,15 +96,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"Источник: {args.source}", file=sys.stderr)
     print(f"Набор ОКВЭД: {OKVED_SET_LABELS.get(args.okved_set, args.okved_set)}", file=sys.stderr)
-    if args.okved:
-        print(f"Доп. ОКВЭД: {', '.join(args.okved)}", file=sys.stderr)
+    if extra_okved:
+        print(f"Доп. ОКВЭД: {', '.join(extra_okved)}", file=sys.stderr)
     print(f"Статус: {'любой' if args.all_statuses else 'только действующие'}", file=sys.stderr)
 
     config = PipelineConfig(
         source=args.source,
         egrul_path=args.egrul_path,
         okved_set=args.okved_set,
-        extra_okved=args.okved,
+        extra_okved=extra_okved,
         only_active=not args.all_statuses,
         enrich=not args.no_enrich,
         api_key=api_key,

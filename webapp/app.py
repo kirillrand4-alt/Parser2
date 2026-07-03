@@ -23,6 +23,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -81,6 +82,21 @@ def resolve_cookie(form_val: str | None) -> str | None:
 
 def resolve_api_key(form_val: str | None) -> str | None:
     return (form_val or "").strip() or load_saved().get("api_key") or os.environ.get("CHECKO_API_KEY") or None
+
+
+def parse_okved_codes(form) -> list[str]:
+    """Коды ОКВЭД из галочек дерева + из текстового поля (через запятую/пробел)."""
+    codes = [c.strip() for c in form.getlist("okved_codes") if c.strip()]
+    for tok in re.split(r"[,\s;]+", form.get("okved_text", "") or ""):
+        tok = tok.strip().replace(",", ".")
+        if tok:
+            codes.append(tok)
+    seen, out = set(), []
+    for c in codes:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
 
 # Состояние задач в памяти (один процесс). job_id -> dict
 JOBS: dict[str, dict] = {}
@@ -206,9 +222,9 @@ def start():
     elif source == "site" and not cookie and not (f.get("browser") == "on"):
         return jsonify({"error": "Для источника «Сайт» нужны куки авторизованного checko (поле «Куки» или env CHECKO_COOKIE), либо включите режим браузера с сохранённым профилем"}), 400
 
-    okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
+    okved_codes = parse_okved_codes(f)
     if not okved_codes:
-        return jsonify({"error": "Выберите хотя бы один ОКВЭД (класс или конкретный код)"}), 400
+        return jsonify({"error": "Выберите ОКВЭД галочками или впишите коды через запятую"}), 400
 
     enrich_mode = f.get("enrich", "none")  # none | api | html (для egrul)
     config = PipelineConfig(
@@ -245,9 +261,9 @@ def count():
     api_key = resolve_api_key(f.get("api_key"))
     if not api_key:
         return jsonify({"error": "Для подсчёта нужен ключ checko"}), 400
-    okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
+    okved_codes = parse_okved_codes(f)
     if not okved_codes:
-        return jsonify({"error": "Выберите хотя бы один ОКВЭД"}), 400
+        return jsonify({"error": "Выберите ОКВЭД галочками или впишите коды через запятую"}), 400
     regions = [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()]
     config = PipelineConfig(
         source="api", okved_set="none", extra_okved=okved_codes,
