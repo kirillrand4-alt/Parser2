@@ -18,10 +18,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("egrul_path", nargs="?", default="",
                    help="путь к дампу ЕГРЮЛ (для --source egrul): файл .xml, архив .zip или папка")
-    p.add_argument("--source", choices=("egrul", "api"), default="egrul",
-                   help="источник списка: egrul (дамп) или api (checko /v2/search). По умолч.: %(default)s")
+    p.add_argument("--source", choices=("egrul", "api", "site"), default="egrul",
+                   help="источник: egrul (дамп) | api (checko /v2/search) | site (каталог checko по кукам). По умолч.: %(default)s")
     p.add_argument("--region", action="append", default=[],
                    help="код региона для --source api (можно несколько; пусто = вся РФ)")
+    p.add_argument("--cookie", default=None,
+                   help="строка Cookie авторизованного checko для --source site (или env CHECKO_COOKIE)")
     p.add_argument("--okved-set", choices=sorted(OKVED_SETS) + ["none"], default=DEFAULT_SET,
                    help="набор основных ОКВЭД (none = только из --okved). По умолчанию: %(default)s")
     p.add_argument("--okved", action="append", default=[],
@@ -52,6 +54,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.source == "api" and not (args.api_key or __import__("os").environ.get("CHECKO_API_KEY")):
         print("Для --source api нужен ключ: --api-key или env CHECKO_API_KEY.", file=sys.stderr)
         return 2
+    if args.source == "site" and not (args.cookie or __import__("os").environ.get("CHECKO_COOKIE")):
+        print("ВНИМАНИЕ: --source site без кук — контакты могут быть скрыты. "
+              "Задайте --cookie или env CHECKO_COOKIE.", file=sys.stderr)
 
     if args.count:
         from .pipeline import count_companies
@@ -78,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         only_active=not args.all_statuses,
         enrich=not args.no_enrich,
         api_key=args.api_key,
+        cookie=args.cookie or __import__("os").environ.get("CHECKO_COOKIE"),
         prefer_api=not args.html,
         delay=args.delay,
         limit=args.limit,

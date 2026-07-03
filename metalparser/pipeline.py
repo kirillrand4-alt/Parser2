@@ -32,13 +32,14 @@ def _is_active_status(status: str) -> bool:
 
 @dataclass
 class PipelineConfig:
-    source: str = "egrul"              # 'egrul' | 'api'
+    source: str = "egrul"              # 'egrul' | 'api' | 'site'
     egrul_path: str = ""
     okved_set: str = "core"
     extra_okved: list[str] = field(default_factory=list)
     only_active: bool = True
     enrich: bool = True                # для egrul: тянуть ли контакты
     api_key: str | None = None
+    cookie: str | None = None          # для source='site': куки авторизации checko
     prefer_api: bool = True
     delay: float = 1.5
     limit: int = 0                     # 0 = без ограничения
@@ -56,8 +57,47 @@ def iter_run(
     """Отдаёт подходящие компании по мере готовности (с контактами)."""
     if config.source == "api":
         yield from _iter_api(config, on_progress)
+    elif config.source == "site":
+        yield from _iter_site(config, on_progress)
     else:
         yield from _iter_egrul(config, on_progress)
+
+
+def _iter_site(config: PipelineConfig, on_progress) -> Iterator[Company]:
+    """Сбор через сайт checko (HTML): каталог по ОКВЭД -> карточки -> контакты."""
+    from .site import CheckoSiteClient
+    matcher = _matcher(config)
+    client = CheckoSiteClient(cookie=config.cookie, delay=config.delay)
+    codes = search_codes(matcher.prefixes)     # каталог тоже по коду-группе
+    seen: set[str] = set()
+    count = 0
+    for code in codes:
+        page = 1
+        while page <= MAX_SEARCH_PAGES:
+            try:
+                ogrns = client.catalog_ogrns(code, page)
+            except Exception:  # noqa: BLE001 — страница недоступна/блок, к следующему коду
+                break
+            fresh = [o for o in ogrns if o not in seen]
+            for o in ogrns:
+                seen.add(o)
+            for ogrn in fresh:
+                try:
+                    comp = client.card(ogrn, okved_code=code)
+                except Exception as exc:  # noqa: BLE001
+                    comp = Company(ogrn=ogrn, okved_code=code,
+                                   enrich_source="site", enrich_error=f"{type(exc).__name__}: {exc}")
+                if config.only_active and comp.status and not _is_active_status(comp.status):
+                    continue
+                yield comp
+                count += 1
+                if on_progress:
+                    on_progress(count)
+                if config.limit and count >= config.limit:
+                    return
+            if len(ogrns) < 50:   # похоже, последняя страница по этому коду
+                break
+            page += 1
 
 
 def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:

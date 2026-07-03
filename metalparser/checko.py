@@ -385,8 +385,14 @@ def extract_contacts_from_html(html: str) -> tuple[list[str], list[str], list[st
     phones += _PHONE_RE.findall(text)
     emails += _EMAIL_RE.findall(text)
 
-    # отсеиваем мусорные «сайты» (соцсети checko, картинки, ассеты)
-    bad = ("googleapis", "gstatic", "yandex", "google.com/maps", ".png", ".jpg",
-           ".svg", ".css", ".js", "checko.ru")
-    sites = [s for s in sites if not any(b in s.lower() for b in bad)]
+    # отсеиваем мусорные «сайты»: ассеты, аналитику, гос-/справочные сервисы
+    bad = (
+        "googleapis", "gstatic", "yastatic", "mc.yandex", "yandex.ru/clck",
+        "google.com/maps", "google-analytics", "doubleclick", "clarity.ms",
+        ".png", ".jpg", ".jpeg", ".svg", ".css", ".js", ".ico", ".woff",
+        "checko.ru", "fips.ru", "fips_serv", "zakupki.gov", "gov.ru", "nalog.",
+        "rusprofile", "list-org", "sbis.ru", "audit-it", "datanewton",
+        "arbitr.ru", "kad.arbitr", "fedresurs", "sudrf",
+    )
+    sites = [s for s in _uniq(sites) if not any(b in s.lower() for b in bad)]
     return phones, emails, sites

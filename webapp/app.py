@@ -132,9 +132,10 @@ def index():
 @login_required
 def start():
     f = request.form
-    source = f.get("source", "egrul")           # egrul | api
+    source = f.get("source", "api")             # api | site | egrul
     egrul_path = (f.get("egrul_path") or "").strip()
     api_key = (f.get("api_key") or "").strip() or os.environ.get("CHECKO_API_KEY") or None
+    cookie = (f.get("cookie") or "").strip() or os.environ.get("CHECKO_COOKIE") or None
     regions = [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()]
 
     if source == "egrul":
@@ -142,6 +143,8 @@ def start():
             return jsonify({"error": "Укажите существующий путь к дампу ЕГРЮЛ"}), 400
     elif source == "api" and not api_key:
         return jsonify({"error": "Для источника API нужен ключ checko (поле «API-ключ» или env CHECKO_API_KEY)"}), 400
+    elif source == "site" and not cookie:
+        return jsonify({"error": "Для источника «Сайт» нужны куки авторизованного checko (поле «Куки» или env CHECKO_COOKIE)"}), 400
 
     okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
     if not okved_codes:
@@ -157,6 +160,7 @@ def start():
         enrich=enrich_mode != "none",
         prefer_api=enrich_mode == "api",
         api_key=api_key,
+        cookie=cookie,
         delay=float(f.get("delay", "1.5") or 1.5),
         limit=int(f.get("limit", "0") or 0),
         regions=regions,

@@ -77,9 +77,15 @@
     <form id="form">
       <label>Источник списка компаний</label>
       <select name="source" id="source">
-        <option value="api" selected>API checko (/v2/search по ОКВЭД) — дамп не нужен</option>
+        <option value="api" selected>API checko (/v2/search) — быстро, но лимит запросов/день</option>
+        <option value="site">Сайт checko (по кукам) — без лимита API, нужны куки</option>
         <option value="egrul">Дамп ЕГРЮЛ (файл на сервере)</option>
       </select>
+
+      <div id="site_block" style="display:none;">
+        <label>Куки авторизованного аккаунта checko (строка Cookie)</label>
+        <input name="cookie" placeholder="оставьте пустым → возьмётся из CHECKO_COOKIE на сервере">
+      </div>
 
       <div id="egrul_block" style="display:none;">
         <label>Путь к дампу ЕГРЮЛ (файл .xml, архив .zip или папка на сервере)</label>
@@ -188,9 +194,10 @@ const BASE = "{{ request.script_root }}";
 // Переключение блоков в зависимости от источника
 const sourceSel = document.getElementById('source');
 function toggleSource() {
-  const api = sourceSel.value === 'api';
-  document.getElementById('egrul_block').style.display = api ? 'none' : 'block';
-  document.getElementById('api_block').style.display = api ? 'block' : 'none';
+  const s = sourceSel.value;
+  document.getElementById('egrul_block').style.display = s === 'egrul' ? 'block' : 'none';
+  document.getElementById('api_block').style.display = (s === 'api' || s === 'site') ? 'block' : 'none';
+  document.getElementById('site_block').style.display = s === 'site' ? 'block' : 'none';
 }
 sourceSel.addEventListener('change', toggleSource);
 toggleSource();

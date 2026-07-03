@@ -26,6 +26,14 @@ OKVED_TREE = _load_tree()
 # Все коды-группы (XX.XX) — уровень, по которому checko ищет точно.
 ALL_GROUP_CODES = [g["c"] for s in OKVED_TREE for c in s["cl"] for g in c["g"]]
 
+# Код -> наименование (группы и классы) для подстановки «вида деятельности».
+OKVED_NAMES: dict[str, str] = {}
+for _s in OKVED_TREE:
+    for _c in _s["cl"]:
+        OKVED_NAMES.setdefault(_c["c"], _c["n"])
+        for _g in _c["g"]:
+            OKVED_NAMES[_g["c"]] = _g["n"]
+
 # Наборы префиксов основных ОКВЭД. Ключи используются в CLI (--okved-set).
 OKVED_SETS: dict[str, list[str]] = {
     # Ядро: металлургия + готовые металлоизделия/мехобработка + металлообр. станки
