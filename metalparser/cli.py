@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="код региона для --source api (можно несколько; пусто = вся РФ)")
     p.add_argument("--cookie", default=None,
                    help="строка Cookie авторизованного checko для --source site (или env CHECKO_COOKIE)")
+    p.add_argument("--browser", action="store_true",
+                   help="для --source site: сбор через настоящий браузер (Playwright) — надёжнее против блокировок")
     p.add_argument("--okved-set", choices=sorted(OKVED_SETS) + ["none"], default=DEFAULT_SET,
                    help="набор основных ОКВЭД (none = только из --okved). По умолчанию: %(default)s")
     p.add_argument("--okved", action="append", default=[],
@@ -70,9 +72,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.source == "api" and not api_key:
         print("Для --source api нужен ключ: --api-key, env CHECKO_API_KEY или сохранённый.", file=sys.stderr)
         return 2
-    if args.source == "site" and not cookie:
+    if args.source == "site" and not cookie and not args.browser:
         print("ВНИМАНИЕ: --source site без кук — контакты могут быть скрыты. "
-              "Задайте --cookie, env CHECKO_COOKIE или сохраните через веб.", file=sys.stderr)
+              "Задайте --cookie, env CHECKO_COOKIE, сохраните через веб "
+              "или используйте --browser с сохранённым профилем (browser_login.py).", file=sys.stderr)
 
     if args.count:
         from .pipeline import count_companies
@@ -100,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         enrich=not args.no_enrich,
         api_key=api_key,
         cookie=cookie,
+        browser=args.browser,
+        user_agent=os.environ.get("CHECKO_UA") or _saved("ua"),
         prefer_api=not args.html,
         delay=args.delay,
         limit=args.limit,

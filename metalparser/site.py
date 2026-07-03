@@ -38,18 +38,32 @@ def code6(dotted: str) -> str:
 
 class CheckoSiteClient:
     def __init__(self, cookie: str | None = None, delay: float = 2.0,
-                 timeout: float = 30.0, max_retries: int = 4, user_agent: str = DEFAULT_UA,
+                 timeout: float = 30.0, max_retries: int = 4, user_agent: str | None = None,
                  max_delay: float = 30.0):
         self.cookie = cookie or os.environ.get("CHECKO_COOKIE") or None
         self.delay = delay
         self.max_delay = max_delay
         self.timeout = timeout
         self.max_retries = max_retries
+        ua = user_agent or os.environ.get("CHECKO_UA") or DEFAULT_UA
         self.session = requests.Session()
+        # Полный «браузерный» набор заголовков — чтобы запросы не выглядели ботом.
         self.session.headers.update({
-            "User-Agent": user_agent,
-            "Accept-Language": "ru,en;q=0.8",
-            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
+                      "image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept-Encoding": "gzip, deflate",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Sec-Ch-Ua": '"Chromium";v="120", "Google Chrome";v="120", "Not?A_Brand";v="99"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Referer": "https://checko.ru/",
+            "Connection": "keep-alive",
         })
         if self.cookie:
             self.session.headers["Cookie"] = self.cookie.strip()

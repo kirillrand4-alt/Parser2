@@ -40,6 +40,8 @@ class PipelineConfig:
     enrich: bool = True                # для egrul: тянуть ли контакты
     api_key: str | None = None
     cookie: str | None = None          # для source='site': куки авторизации checko
+    user_agent: str | None = None      # для source='site': UA как в браузере с куками
+    browser: bool = False              # source='site' через настоящий браузер (Playwright)
     prefer_api: bool = True
     delay: float = 1.5
     limit: int = 0                     # 0 = без ограничения
@@ -71,50 +73,60 @@ def _iter_site(config: PipelineConfig, on_progress, skip: set | None = None) -> 
 
     skip — множество уже собранных ИНН/ОГРН (для докачки: пропустить их)."""
     import sys
-    from .site import CheckoSiteClient
     matcher = _matcher(config)
-    client = CheckoSiteClient(cookie=config.cookie, delay=config.delay)
+    if config.browser:
+        from .browser import BrowserSiteClient
+        client = BrowserSiteClient(cookie=config.cookie, delay=config.delay)
+    else:
+        from .site import CheckoSiteClient
+        client = CheckoSiteClient(cookie=config.cookie, delay=config.delay,
+                                  user_agent=config.user_agent)
     codes = search_codes(matcher.prefixes)     # каталог тоже по коду-группе
     skip = skip or set()
     seen: set[str] = set()
     count = 0
     fails = 0                                   # подряд идущих ошибок (429/блок)
     MAX_FAILS = 15
-    for code in codes:
-        page = 1
-        while page <= MAX_SEARCH_PAGES:
-            try:
-                ogrns = client.catalog_ogrns(code, page)
-            except Exception:  # noqa: BLE001 — страница недоступна/блок, к следующему коду
-                break
-            fresh = [o for o in ogrns if o not in seen and o not in skip]
-            for o in ogrns:
-                seen.add(o)
-            for ogrn in fresh:
+    try:
+        for code in codes:
+            page = 1
+            while page <= MAX_SEARCH_PAGES:
                 try:
-                    comp = client.card(ogrn, okved_code=code)
-                    fails = 0
-                except Exception as exc:  # noqa: BLE001
-                    fails += 1
-                    comp = Company(ogrn=ogrn, okved_code=code,
-                                   enrich_source="site", enrich_error=f"{type(exc).__name__}: {exc}")
-                    if fails >= MAX_FAILS:
-                        print(f"  [site] {fails} ошибок подряд — сайт блокирует запросы, "
-                              f"останавливаюсь (собрано {count}). Повторите позже — докачает остальных.",
-                              file=sys.stderr)
-                        yield comp
+                    ogrns = client.catalog_ogrns(code, page)
+                except Exception:  # noqa: BLE001 — страница недоступна/блок, к следующему коду
+                    break
+                fresh = [o for o in ogrns if o not in seen and o not in skip]
+                for o in ogrns:
+                    seen.add(o)
+                for ogrn in fresh:
+                    try:
+                        comp = client.card(ogrn, okved_code=code)
+                        fails = 0
+                    except Exception as exc:  # noqa: BLE001
+                        fails += 1
+                        comp = Company(ogrn=ogrn, okved_code=code,
+                                       enrich_source="site", enrich_error=f"{type(exc).__name__}: {exc}")
+                        if fails >= MAX_FAILS:
+                            print(f"  [site] {fails} ошибок подряд — сайт блокирует запросы, "
+                                  f"останавливаюсь (собрано {count}). Повторите позже — докачает остальных.",
+                                  file=sys.stderr)
+                            yield comp
+                            return
+                    if config.only_active and comp.status and not _is_active_status(comp.status):
+                        continue
+                    yield comp
+                    count += 1
+                    if on_progress:
+                        on_progress(count)
+                    if config.limit and count >= config.limit:
                         return
-                if config.only_active and comp.status and not _is_active_status(comp.status):
-                    continue
-                yield comp
-                count += 1
-                if on_progress:
-                    on_progress(count)
-                if config.limit and count >= config.limit:
-                    return
-            if len(ogrns) < 50:   # похоже, последняя страница по этому коду
-                break
-            page += 1
+                if len(ogrns) < 50:   # похоже, последняя страница по этому коду
+                    break
+                page += 1
+    finally:
+        closer = getattr(client, "close", None)
+        if callable(closer):
+            closer()
 
 
 def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:

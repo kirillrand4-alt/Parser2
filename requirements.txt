@@ -4,3 +4,7 @@ openpyxl>=3.1
 flask>=3.0
 gunicorn>=21.0
 pytest>=8.0
+
+# Опционально — только для режима «настоящий браузер» (--source site --browser):
+#   pip install playwright && playwright install chromium
+# playwright>=1.40

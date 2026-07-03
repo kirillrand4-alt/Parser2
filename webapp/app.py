@@ -203,8 +203,8 @@ def start():
             return jsonify({"error": "Укажите существующий путь к дампу ЕГРЮЛ"}), 400
     elif source == "api" and not api_key:
         return jsonify({"error": "Для источника API нужен ключ checko (поле «API-ключ» или env CHECKO_API_KEY)"}), 400
-    elif source == "site" and not cookie:
-        return jsonify({"error": "Для источника «Сайт» нужны куки авторизованного checko (поле «Куки» или env CHECKO_COOKIE)"}), 400
+    elif source == "site" and not cookie and not (f.get("browser") == "on"):
+        return jsonify({"error": "Для источника «Сайт» нужны куки авторизованного checko (поле «Куки» или env CHECKO_COOKIE), либо включите режим браузера с сохранённым профилем"}), 400
 
     okved_codes = [c.strip() for c in f.getlist("okved_codes") if c.strip()]
     if not okved_codes:
@@ -221,6 +221,8 @@ def start():
         prefer_api=enrich_mode == "api",
         api_key=api_key,
         cookie=cookie,
+        browser=(f.get("browser") == "on"),
+        user_agent=load_saved().get("ua") or os.environ.get("CHECKO_UA"),
         delay=float(f.get("delay", "1.5") or 1.5),
         limit=int(f.get("limit", "0") or 0),
         regions=regions,

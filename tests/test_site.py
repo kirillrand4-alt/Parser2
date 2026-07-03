@@ -85,6 +85,23 @@ def test_iter_site_all_statuses(monkeypatch):
     assert {c.inn for c in run(cfg)} == {"111", "222", "333"}
 
 
+def test_iter_site_uses_browser_and_closes(monkeypatch):
+    import metalparser.browser as browser
+
+    closed = {"v": False}
+
+    class FakeBrowser(FakeSiteClient):
+        def close(self):
+            closed["v"] = True
+
+    monkeypatch.setattr(browser, "BrowserSiteClient", FakeBrowser)
+    cfg = PipelineConfig(source="site", okved_set="none", extra_okved=["25.62"],
+                         browser=True, delay=0, only_active=True)
+    companies = run(cfg)
+    assert {c.inn for c in companies} == {"111", "333"}
+    assert closed["v"] is True   # браузер закрыт в finally
+
+
 def test_iter_site_resume_skip(monkeypatch):
     monkeypatch.setattr(site, "CheckoSiteClient", FakeSiteClient)
     cfg = PipelineConfig(source="site", okved_set="none", extra_okved=["25.62"],
