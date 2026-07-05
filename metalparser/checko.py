@@ -141,6 +141,9 @@ class KeyPool:
     def total(self) -> int:
         return len(self._keys)
 
+    def keys_snapshot(self) -> list:
+        return list(self._keys)
+
     def alive(self) -> int:
         with self._lock:
             return len([k for k in self._keys if k not in self._dead])

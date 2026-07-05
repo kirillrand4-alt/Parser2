@@ -141,7 +141,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     import sys
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import requests as _requests
-    from .checko import (CheckoLimit, KeyPool, CheckoClient, pooled_api_get,
+    from .checko import (CheckoLimit, KeyPool, CheckoClient, pooled_api_get, _is_limit_meta,
                          build_search_params, _parse_keys, API_URL, SEARCH_URL, DEFAULT_UA)
     extract_search_records = CheckoClient.extract_search_records
 
@@ -155,6 +155,27 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
 
     queries = search_codes(matcher.prefixes)
     regions = config.regions or [None]
+
+    # Быстрая параллельная проверка ключей — отсеять мёртвые/невалидные заранее,
+    # чтобы в процессе не было пауз на переборе (живой ключ тратит 1 лёгкий запрос).
+    if pool.total() > 5 and queries:
+        _pp = build_search_params(queries[0], regions[0], config.only_active, 1)
+
+        def _probe(k):
+            try:
+                r = session.get(SEARCH_URL, params={**_pp, "key": k}, timeout=15)
+                pl = r.json()
+                if _is_limit_meta(pl) or r.status_code in (401, 403):
+                    pool.mark_dead(k)
+            except Exception:  # noqa: BLE001
+                pass
+
+        with ThreadPoolExecutor(max_workers=min(10, pool.total())) as _pex:
+            list(_pex.map(_probe, pool.keys_snapshot()))
+        print(f"  [api] живых ключей: {pool.alive()} из {pool.total()}", file=sys.stderr)
+        if pool.alive() == 0:
+            print("  [api] нет живых ключей (исчерпаны/невалидны). Завтра докачает.", file=sys.stderr)
+            return
     skip = skip or set()
     seen: set[str] = set()
     count = 0
