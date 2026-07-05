@@ -122,7 +122,7 @@ def main():
         print("Не задан список ОКВЭД: --okved 25.62,24.10 или --okved-file data\\okved.txt",
               file=sys.stderr)
         return 2
-    print(f"Источник: {args.source}. Кодов ОКВЭД: {len(codes)}. База: {args.csv}")
+    print(f"Источник: {args.source}. Кодов ОКВЭД: {len(codes)}. База: {args.csv}", flush=True)
 
     config = PipelineConfig(
         source=args.source, okved_set="none", extra_okved=codes,

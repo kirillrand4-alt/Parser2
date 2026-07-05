@@ -161,56 +161,68 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
     skip = skip or set()
     seen: set[str] = set()
     count = 0
-    for region in regions:
-        for query in queries:
-            page = 1
-            while page <= MAX_SEARCH_PAGES:
-                try:
-                    payload = client.search_page(query, region, config.only_active, page)
-                except CheckoLimit as exc:
-                    print(f"  [api] {exc} — лимит всех ключей исчерпан, останавливаюсь "
-                          f"(собрано {count}). Продолжите позже — докачает.", file=sys.stderr)
-                    return
-                except Exception as exc:  # noqa: BLE001 — 403/пагинация вне тарифа по коду
-                    print(f"  [api] {query} стр.{page}: {exc}. Беру доступное по этому коду.",
-                          file=sys.stderr)
-                    break
-                records = client.extract_search_records(payload)
-                if not records:
-                    break
-                for rec in records:
-                    stub = company_from_search_record(rec)
-                    if not stub.inn or stub.inn in seen or stub.inn in skip:
-                        continue
-                    seen.add(stub.inn)
-                    # поиск идёт по точному осн. ОКВЭД → код известен заранее
-                    if not stub.okved_code:
-                        stub.okved_code = query
-                    # Полные данные + контакты через /v2/company
+    stats = {"fetched": 0, "drop_okved": 0, "drop_inactive": 0, "errors": 0, "search": 0}
+
+    def summary():
+        print(f"  [api] карточек запрошено: {stats['fetched']}, выдано: {count}, "
+              f"отфильтровано по ОКВЭД: {stats['drop_okved']}, по статусу: {stats['drop_inactive']}, "
+              f"ошибок карточек: {stats['errors']}, страниц поиска: {stats['search']}", file=sys.stderr)
+
+    try:
+        for region in regions:
+            for query in queries:
+                page = 1
+                while page <= MAX_SEARCH_PAGES:
                     try:
-                        data = client.company_data(stub.inn)
-                        fill_company_from_data(stub, data)
-                        stub.enriched = True
-                        stub.enrich_source = "api"
+                        stats["search"] += 1
+                        payload = client.search_page(query, region, config.only_active, page)
                     except CheckoLimit as exc:
-                        print(f"  [api] {exc} — лимит всех ключей исчерпан (собрано {count}). "
-                              f"Продолжите позже — докачает.", file=sys.stderr)
+                        print(f"  [api] {exc} — лимит ВСЕХ ключей на сегодня исчерпан, останавливаюсь "
+                              f"(собрано {count}). Завтра после сброса докачает.", file=sys.stderr)
                         return
-                    except Exception as exc:  # noqa: BLE001
-                        stub.enrich_error = f"{type(exc).__name__}: {exc}"
-                    # Пост-фильтр: основной ОКВЭД должен быть из целевых групп
-                    if not matcher.matches(stub.okved_code):
-                        continue
-                    # Пост-фильтр: только действующие (если статус известен)
-                    if config.only_active and stub.status and not _is_active_status(stub.status):
-                        continue
-                    yield stub
-                    count += 1
-                    if on_progress:
-                        on_progress(count)
-                    if config.limit and count >= config.limit:
-                        return
-                page += 1
+                    except Exception as exc:  # noqa: BLE001 — 403/пагинация вне тарифа по коду
+                        print(f"  [api] {query} стр.{page}: {exc}. Беру доступное по этому коду.",
+                              file=sys.stderr)
+                        break
+                    records = client.extract_search_records(payload)
+                    if not records:
+                        break
+                    for rec in records:
+                        stub = company_from_search_record(rec)
+                        if not stub.inn or stub.inn in seen or stub.inn in skip:
+                            continue
+                        seen.add(stub.inn)
+                        if not stub.okved_code:      # поиск по точному осн. ОКВЭД → код известен
+                            stub.okved_code = query
+                        try:
+                            stats["fetched"] += 1
+                            data = client.company_data(stub.inn)
+                            fill_company_from_data(stub, data)
+                            stub.enriched = True
+                            stub.enrich_source = "api"
+                        except CheckoLimit as exc:
+                            print(f"  [api] {exc} — лимит ВСЕХ ключей на сегодня исчерпан "
+                                  f"(собрано {count}). Завтра докачает.", file=sys.stderr)
+                            return
+                        except Exception as exc:  # noqa: BLE001
+                            stub.enrich_error = f"{type(exc).__name__}: {exc}"
+                            stats["errors"] += 1
+                        # Пост-фильтр: основной ОКВЭД из целевых групп
+                        if not matcher.matches(stub.okved_code):
+                            stats["drop_okved"] += 1
+                            continue
+                        if config.only_active and stub.status and not _is_active_status(stub.status):
+                            stats["drop_inactive"] += 1
+                            continue
+                        yield stub
+                        count += 1
+                        if on_progress:
+                            on_progress(count)
+                        if config.limit and count >= config.limit:
+                            return
+                    page += 1
+    finally:
+        summary()
 
 
 def count_companies(config: PipelineConfig, delay: float | None = None):
