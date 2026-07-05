@@ -208,8 +208,11 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
         with ThreadPoolExecutor(max_workers=conc) as ex:
             for region in regions:
                 for query in queries:
-                    # 1) перечисляем ИНН по коду (поиск, через пул, последовательно)
+                    # 1) перечисляем ИНН по коду (поиск, через пул, последовательно).
+                    #    Стоп, если страница не принесла НИ ОДНОГО нового ИНН
+                    #    (checko повторяет записи на «лишних» страницах).
                     inns = []
+                    page_all: set[str] = set()
                     page = 1
                     while page <= MAX_SEARCH_PAGES:
                         try:
@@ -226,11 +229,18 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                         recs = extract_search_records(payload)
                         if not recs:
                             break
+                        fresh_page = 0
                         for rec in recs:
                             stub = company_from_search_record(rec)
-                            if stub.inn and stub.inn not in seen and stub.inn not in skip:
+                            if not stub.inn or stub.inn in page_all:
+                                continue
+                            page_all.add(stub.inn)
+                            fresh_page += 1
+                            if stub.inn not in seen and stub.inn not in skip:
                                 seen.add(stub.inn)
                                 inns.append(stub.inn)
+                        if fresh_page == 0:      # повтор/конец — дальше листать бессмысленно
+                            break
                         page += 1
                     # 2) параллельно тянем карточки
                     futures = {ex.submit(fetch_card, inn, query): inn for inn in inns}
@@ -304,6 +314,7 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
         for region in regions:
             for query in queries:
                 page = 1
+                page_all: set[str] = set()
                 while page <= MAX_SEARCH_PAGES:
                     try:
                         stats["search"] += 1
@@ -319,9 +330,14 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                     records = client.extract_search_records(payload)
                     if not records:
                         break
+                    fresh_page = 0
                     for rec in records:
                         stub = company_from_search_record(rec)
-                        if not stub.inn or stub.inn in seen or stub.inn in skip:
+                        if not stub.inn or stub.inn in page_all:
+                            continue
+                        page_all.add(stub.inn)
+                        fresh_page += 1
+                        if stub.inn in seen or stub.inn in skip:
                             continue
                         seen.add(stub.inn)
                         if not stub.okved_code:      # поиск по точному осн. ОКВЭД → код известен
@@ -363,6 +379,8 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                             on_progress(count)
                         if config.limit and count >= config.limit:
                             return
+                    if fresh_page == 0:       # страница без новых ИНН — повтор/конец
+                        break
                     page += 1
     finally:
         summary()
