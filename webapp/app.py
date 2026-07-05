@@ -128,6 +128,7 @@ def parse_selection(f) -> dict:
         "only_active": f.get("only_active", "on") == "on",
         "main_okved_only": f.get("main_okved_only") == "on",
         "delay": float(f.get("delay", "1.5") or 1.5),
+        "concurrency": int(f.get("concurrency", "3") or 3),
         "browser": f.get("browser") == "on",
         "regions": [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()],
     }
@@ -161,7 +162,8 @@ def _auto_config(sel: dict) -> PipelineConfig:
         only_active=sel.get("only_active", True), main_okved_only=sel.get("main_okved_only", False),
         api_key=resolve_api_key(None), cookie=resolve_cookie(None),
         browser=sel.get("browser", False), user_agent=saved.get("ua") or os.environ.get("CHECKO_UA"),
-        delay=sel.get("delay", 1.5), regions=sel.get("regions", []),
+        delay=sel.get("delay", 1.5), concurrency=sel.get("concurrency", 3),
+        regions=sel.get("regions", []),
     )
 
 
@@ -400,6 +402,7 @@ def start():
         user_agent=load_saved().get("ua") or os.environ.get("CHECKO_UA"),
         delay=float(f.get("delay", "1.5") or 1.5),
         limit=int(f.get("limit", "0") or 0),
+        concurrency=int(f.get("concurrency", "3") or 3),
         regions=regions,
     )
 

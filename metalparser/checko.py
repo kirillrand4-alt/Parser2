@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 
 import requests
@@ -125,6 +126,84 @@ def _is_limit_meta(payload) -> bool:
         return False
     msg = str(meta.get("message", "")).lower()
     return any(w in msg for w in ("лимит", "тариф", "limit", "превыш", "доступ", "forbidden"))
+
+
+class KeyPool:
+    """Потокобезопасный пул ключей: раздаёт по кругу, исключённые (исчерпавшие
+    лимит) больше не выдаёт до конца прогона."""
+
+    def __init__(self, keys):
+        self._keys = list(keys)
+        self._dead: set[str] = set()
+        self._lock = threading.Lock()
+        self._rr = 0
+
+    def total(self) -> int:
+        return len(self._keys)
+
+    def alive(self) -> int:
+        with self._lock:
+            return len([k for k in self._keys if k not in self._dead])
+
+    def acquire(self) -> str | None:
+        with self._lock:
+            alive = [k for k in self._keys if k not in self._dead]
+            if not alive:
+                return None
+            self._rr = (self._rr + 1) % len(alive)
+            return alive[self._rr]
+
+    def mark_dead(self, key: str):
+        with self._lock:
+            self._dead.add(key)
+
+
+def build_search_params(query, region, active, page) -> dict:
+    params = {SEARCH_PARAM["by"]: SEARCH_BY_OKVED, SEARCH_PARAM["obj"]: SEARCH_OBJ,
+              SEARCH_PARAM["query"]: query, SEARCH_PARAM["page"]: page}
+    if region:
+        params[SEARCH_PARAM["region"]] = region
+    if active:
+        params[SEARCH_PARAM["active"]] = SEARCH_ACTIVE_VALUE
+    return params
+
+
+def pooled_api_get(session, pool: "KeyPool", url: str, params: dict,
+                   timeout: float = 25.0, delay: float = 0.0) -> dict:
+    """Запрос к API через пул ключей (для параллельного режима). При лимите/401/403
+    ключ помечается мёртвым и берётся следующий; если живых нет — CheckoLimit."""
+    attempts = 0
+    max_attempts = pool.total() * 2 + 6
+    while True:
+        attempts += 1
+        if attempts > max_attempts:
+            raise CheckoLimit("исчерпаны попытки/ключи")
+        key = pool.acquire()
+        if key is None:
+            raise CheckoLimit("все ключи исчерпали лимит")
+        p = dict(params)
+        p["key"] = key
+        try:
+            resp = session.get(url, params=p, timeout=timeout)
+        except requests.RequestException:
+            time.sleep(1.0)
+            continue
+        if resp.status_code == 429:
+            time.sleep(2.0)
+            continue
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = None
+        if (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403):
+            pool.mark_dead(key)
+            continue
+        resp.raise_for_status()
+        if payload is None:
+            raise requests.RequestException(f"не-JSON ответ от {url}")
+        if delay:
+            time.sleep(delay)
+        return payload
 
 
 class CheckoClient:

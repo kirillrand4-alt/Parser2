@@ -108,6 +108,7 @@ def build_parser():
     p.add_argument("--xlsx", default="data/base.xlsx")
     p.add_argument("--no-xlsx", action="store_true")
     p.add_argument("--delay", type=float, default=1.5)
+    p.add_argument("--concurrency", type=int, default=3, help="одновременных запросов к API")
     p.add_argument("--all-statuses", action="store_true")
     p.add_argument("--browser", action="store_true", help="site: через настоящий браузер")
     p.add_argument("--loop", action="store_true", help="повторять автоматически")
@@ -132,6 +133,7 @@ def main():
         browser=args.browser,
         user_agent=os.environ.get("CHECKO_UA") or _saved("ua"),
         delay=args.delay,
+        concurrency=args.concurrency,
     )
     xlsx = None if args.no_xlsx else args.xlsx
 

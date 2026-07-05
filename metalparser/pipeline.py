@@ -46,6 +46,7 @@ class PipelineConfig:
     prefer_api: bool = True
     delay: float = 1.5
     limit: int = 0                     # 0 = без ограничения
+    concurrency: int = 1               # source=api: одновременных запросов (по ключам)
     regions: list[str] = field(default_factory=list)  # пусто = вся РФ
 
 
@@ -62,7 +63,10 @@ def iter_run(
 
     skip — уже собранные ИНН/ОГРН (докачка, актуально для source='site')."""
     if config.source == "api":
-        yield from _iter_api(config, on_progress, skip=skip)
+        if config.concurrency and config.concurrency > 1:
+            yield from _iter_api_parallel(config, on_progress, skip=skip)
+        else:
+            yield from _iter_api(config, on_progress, skip=skip)
     elif config.source == "site":
         yield from _iter_site(config, on_progress, skip=skip)
     else:
@@ -128,6 +132,110 @@ def _iter_site(config: PipelineConfig, on_progress, skip: set | None = None) -> 
         closer = getattr(client, "close", None)
         if callable(closer):
             closer()
+
+
+def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = None) -> Iterator[Company]:
+    """Параллельный сбор через API: до config.concurrency карточек одновременно,
+    каждый запрос берёт живой ключ из пула; исчерпавший лимит ключ выбывает."""
+    import os
+    import sys
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import requests as _requests
+    from .checko import (CheckoLimit, KeyPool, CheckoClient, pooled_api_get,
+                         build_search_params, _parse_keys, API_URL, SEARCH_URL, DEFAULT_UA)
+    extract_search_records = CheckoClient.extract_search_records
+
+    debug = os.environ.get("CHECKO_DEBUG") == "1"
+    matcher = _matcher(config)
+    pool = KeyPool(_parse_keys(config.api_key))
+    conc = min(max(2, config.concurrency), max(1, pool.total()))
+    session = _requests.Session()
+    session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
+    print(f"  [api] параллельно: {conc} одновременных запросов, ключей: {pool.total()}", file=sys.stderr)
+
+    queries = search_codes(matcher.prefixes)
+    regions = config.regions or [None]
+    skip = skip or set()
+    seen: set[str] = set()
+    count = 0
+    stats = {"fetched": 0, "drop_okved": 0, "drop_inactive": 0, "errors": 0, "search": 0}
+
+    def fetch_card(inn, query):
+        c = Company(inn=inn, okved_code=query, enrich_source="api")
+        data = pooled_api_get(session, pool, API_URL, {"inn": inn}, delay=config.delay)
+        fill_company_from_data(c, data)
+        if not c.okved_code:
+            c.okved_code = query
+        c.enriched = True
+        return c
+
+    def keep(c):
+        if config.main_okved_only and not matcher.matches(c.okved_code):
+            stats["drop_okved"] += 1
+            return False
+        if config.only_active and c.status and not _is_active_status(c.status):
+            stats["drop_inactive"] += 1
+            return False
+        return True
+
+    def summary():
+        print(f"  [api] карточек запрошено: {stats['fetched']}, выдано: {count}, "
+              f"отфильтровано по ОКВЭД: {stats['drop_okved']}, по статусу: {stats['drop_inactive']}, "
+              f"ошибок: {stats['errors']}, страниц поиска: {stats['search']}", file=sys.stderr)
+
+    try:
+        with ThreadPoolExecutor(max_workers=conc) as ex:
+            for region in regions:
+                for query in queries:
+                    # 1) перечисляем ИНН по коду (поиск, через пул, последовательно)
+                    inns = []
+                    page = 1
+                    while page <= MAX_SEARCH_PAGES:
+                        try:
+                            stats["search"] += 1
+                            payload = pooled_api_get(session, pool, SEARCH_URL,
+                                                     build_search_params(query, region, config.only_active, page))
+                        except CheckoLimit:
+                            print(f"  [api] лимит всех ключей исчерпан на поиске (собрано {count}). "
+                                  f"Завтра докачает.", file=sys.stderr)
+                            return
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"  [api] {query} стр.{page}: {exc}", file=sys.stderr)
+                            break
+                        recs = extract_search_records(payload)
+                        if not recs:
+                            break
+                        for rec in recs:
+                            stub = company_from_search_record(rec)
+                            if stub.inn and stub.inn not in seen and stub.inn not in skip:
+                                seen.add(stub.inn)
+                                inns.append(stub.inn)
+                        page += 1
+                    # 2) параллельно тянем карточки
+                    futures = {ex.submit(fetch_card, inn, query): inn for inn in inns}
+                    for fut in as_completed(futures):
+                        stats["fetched"] += 1
+                        try:
+                            c = fut.result()
+                        except CheckoLimit:
+                            print(f"  [api] лимит всех ключей исчерпан (собрано {count}). "
+                                  f"Завтра докачает.", file=sys.stderr)
+                            return
+                        except Exception as exc:  # noqa: BLE001
+                            stats["errors"] += 1
+                            continue
+                        if not keep(c):
+                            if debug:
+                                print(f"  [api DEBUG] {c.inn} осн.ОКВЭД={c.okved_code} → ОТСЕЯН", file=sys.stderr)
+                            continue
+                        yield c
+                        count += 1
+                        if on_progress:
+                            on_progress(count)
+                        if config.limit and count >= config.limit:
+                            return
+    finally:
+        summary()
 
 
 def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:

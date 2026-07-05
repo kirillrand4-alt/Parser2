@@ -59,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--html", action="store_true",
                    help="принудительно HTML-режим checko, даже при наличии ключа")
     p.add_argument("--delay", type=float, default=1.5, help="пауза между запросами к checko, сек")
+    p.add_argument("--concurrency", type=int, default=3,
+                   help="source=api: одновременных запросов по ключам (1 = последовательно)")
     p.add_argument("--limit", type=int, default=0, help="ограничить число компаний (0 = без лимита)")
     p.add_argument("--csv", default="companies.csv", help="путь к CSV (по умолчанию: %(default)s)")
     p.add_argument("--xlsx", default="companies.xlsx", help="путь к Excel (по умолчанию: %(default)s)")
@@ -124,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         prefer_api=not args.html,
         delay=args.delay,
         limit=args.limit,
+        concurrency=args.concurrency,
         regions=args.region,
     )
 
