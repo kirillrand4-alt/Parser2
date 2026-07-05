@@ -68,6 +68,16 @@ def test_api_source(monkeypatch):
     assert a.enrich_source == "api"
 
 
+def test_api_list_only(monkeypatch):
+    monkeypatch.setattr(pipeline, "CheckoClient", FakeClient)
+    # enrich_contacts=False → только список из поиска, без карточек (source=api-list)
+    cfg = PipelineConfig(source="api", okved_set="core", api_key="x", delay=0,
+                         enrich_contacts=False)
+    companies = list(run(cfg))
+    assert {c.inn for c in companies} == {"111", "222", "333", "444"}
+    assert all(c.enrich_source == "api-list" and not c.phones for c in companies)
+
+
 def test_api_main_okved_only(monkeypatch):
     monkeypatch.setattr(pipeline, "CheckoClient", FakeClient)
     # main_okved_only=True → 333 (осн. 62.01) отсеивается

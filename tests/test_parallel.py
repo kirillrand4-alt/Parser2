@@ -55,3 +55,25 @@ def test_parallel_collect(monkeypatch):
                          api_key="k1,k2", delay=0, concurrency=3)
     got = {c.inn for c in run(cfg)}
     assert got == {"11", "22", "33", "44"}   # все собраны, несмотря на мёртвый k1
+
+
+def test_iter_enrich(monkeypatch):
+    from metalparser.pipeline import iter_enrich, PipelineConfig
+    companies = {
+        "11": {"НаимСокр": "ООО 11", "ОКВЭД": {"Код": "25.62"}, "Статус": {"Наим": "Действует"},
+               "Контакты": {"Тел": ["+74950000000"]}},
+        "22": {"НаимСокр": "ООО 22", "ОКВЭД": {"Код": "25.62"}, "Статус": {"Наим": "Действует"}},
+    }
+
+    class FakeSession:
+        def __init__(self): self.headers = {}
+        def get(self, url, params=None, timeout=None):
+            return FakeResp({"data": companies[params["inn"]]})
+
+    import requests as _r
+    monkeypatch.setattr(_r, "Session", lambda: FakeSession())
+    cfg = PipelineConfig(source="api", api_key="k1,k2", concurrency=2, delay=0)
+    got = {c.inn: c for c in iter_enrich(cfg, ["11", "22"])}
+    assert set(got) == {"11", "22"}
+    assert got["11"].phones == ["+7 (495) 000-00-00"]
+    assert got["11"].name == "ООО 11"

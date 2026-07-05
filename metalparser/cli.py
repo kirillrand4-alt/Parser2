@@ -51,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="не фильтровать по статусу (по умолчанию только действующие)")
     p.add_argument("--main-okved-only", action="store_true",
                    help="оставлять только тех, у кого код — ОСНОВНОЙ (по умолчанию берём и с дополнительным)")
+    p.add_argument("--no-contacts", action="store_true",
+                   help="source=api: только список (поиск, без карточек/контактов) — быстро и дёшево")
     p.add_argument("--no-enrich", action="store_true",
                    help="не дообогащать контактами через checko (только данные ЕГРЮЛ)")
     p.add_argument("--api-key", default=None, help="ключ(и) API checko через запятую (или env CHECKO_API_KEY)")
@@ -118,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         extra_okved=extra_okved,
         only_active=not args.all_statuses,
         main_okved_only=args.main_okved_only,
+        enrich_contacts=not args.no_contacts,
         enrich=not args.no_enrich,
         api_key=api_key,
         cookie=cookie,

@@ -394,6 +394,7 @@ def start():
         extra_okved=okved_codes,
         only_active=f.get("only_active", "on") == "on",
         main_okved_only=f.get("main_okved_only") == "on",
+        enrich_contacts=f.get("no_contacts") != "on",
         enrich=enrich_mode != "none",
         prefer_api=enrich_mode == "api",
         api_key=api_key,

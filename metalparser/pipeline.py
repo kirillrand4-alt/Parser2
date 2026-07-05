@@ -17,7 +17,11 @@ from .checko import (
 )
 from .egrul import iter_companies
 from .models import Company
-from .okved import OkvedMatcher, resolve_prefixes, search_codes
+from .okved import OkvedMatcher, resolve_prefixes, search_codes, OKVED_NAMES
+
+
+def _okved_name(code: str) -> str:
+    return OKVED_NAMES.get(code, OKVED_NAMES.get(code[:5], "")) if code else ""
 
 MAX_SEARCH_PAGES = 1000  # предохранитель от бесконечной пагинации
 
@@ -38,6 +42,7 @@ class PipelineConfig:
     extra_okved: list[str] = field(default_factory=list)
     only_active: bool = True
     main_okved_only: bool = False      # True — оставлять только тех, у кого код ОСНОВНОЙ
+    enrich_contacts: bool = True       # source=api: тянуть ли контакты (/v2/company). False = только список
     enrich: bool = True                # для egrul: тянуть ли контакты
     api_key: str | None = None
     cookie: str | None = None          # для source='site': куки авторизации checko
@@ -183,7 +188,8 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
 
     def fetch_card(inn, query):
         c = Company(inn=inn, okved_code=query, enrich_source="api")
-        data = pooled_api_get(session, pool, API_URL, {"inn": inn}, delay=config.delay)
+        payload = pooled_api_get(session, pool, API_URL, {"inn": inn}, delay=config.delay)
+        data = payload.get("data") or payload.get("Данные") or payload
         fill_company_from_data(c, data)
         if not c.okved_code:
             c.okved_code = query
@@ -239,9 +245,22 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                             if stub.inn not in seen and stub.inn not in skip:
                                 seen.add(stub.inn)
                                 inns.append(stub.inn)
+                                # режим «только список» — сразу отдаём без карточки
+                                if not config.enrich_contacts:
+                                    stub.okved_code = stub.okved_code or query
+                                    stub.okved_name = stub.okved_name or _okved_name(stub.okved_code)
+                                    stub.enrich_source = "api-list"
+                                    yield stub
+                                    count += 1
+                                    if on_progress:
+                                        on_progress(count)
+                                    if config.limit and count >= config.limit:
+                                        return
                         if fresh_page == 0:      # повтор/конец — дальше листать бессмысленно
                             break
                         page += 1
+                    if not config.enrich_contacts:
+                        continue
                     # 2) параллельно тянем карточки
                     futures = {ex.submit(fetch_card, inn, query): inn for inn in inns}
                     for fut in as_completed(futures):
@@ -267,6 +286,59 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                             return
     finally:
         summary()
+
+
+def iter_enrich(config: PipelineConfig, inns, on_progress=None, skip: set | None = None) -> Iterator[Company]:
+    """Дообогащение контактами по ГОТОВОМУ списку ИНН — без поиска и пагинации.
+    Параллельно (config.concurrency), с пулом ключей."""
+    import sys
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import requests as _requests
+    from .checko import (CheckoLimit, KeyPool, pooled_api_get, _parse_keys, API_URL, DEFAULT_UA)
+
+    matcher = _matcher(config)
+    pool = KeyPool(_parse_keys(config.api_key))
+    conc = min(max(2, config.concurrency), max(1, pool.total()))
+    session = _requests.Session()
+    session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
+    skip = skip or set()
+    todo = [str(i).strip() for i in inns if str(i).strip() and str(i).strip() not in skip]
+    print(f"  [api] дообогащение: {len(todo)} ИНН, параллельно {conc}, ключей {pool.total()}",
+          file=sys.stderr)
+
+    def fetch(inn):
+        c = Company(inn=inn, enrich_source="api")
+        payload = pooled_api_get(session, pool, API_URL, {"inn": inn}, delay=config.delay)
+        data = payload.get("data") or payload.get("Данные") or payload
+        fill_company_from_data(c, data)
+        c.enriched = True
+        return c
+
+    count = 0
+    errors = 0
+    try:
+        with ThreadPoolExecutor(max_workers=conc) as ex:
+            futures = {ex.submit(fetch, inn): inn for inn in todo}
+            for fut in as_completed(futures):
+                try:
+                    c = fut.result()
+                except CheckoLimit:
+                    print(f"  [api] лимит всех ключей исчерпан (дообогащено {count}). Продолжите позже.",
+                          file=sys.stderr)
+                    return
+                except Exception:  # noqa: BLE001
+                    errors += 1
+                    continue
+                if config.main_okved_only and not matcher.matches(c.okved_code):
+                    continue
+                if config.only_active and c.status and not _is_active_status(c.status):
+                    continue
+                yield c
+                count += 1
+                if on_progress:
+                    on_progress(count)
+    finally:
+        print(f"  [api] дообогащено: {count}, ошибок: {errors}", file=sys.stderr)
 
 
 def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
@@ -342,6 +414,16 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                         seen.add(stub.inn)
                         if not stub.okved_code:      # поиск по точному осн. ОКВЭД → код известен
                             stub.okved_code = query
+                        if not config.enrich_contacts:   # режим «только список»
+                            stub.okved_name = stub.okved_name or _okved_name(stub.okved_code)
+                            stub.enrich_source = "api-list"
+                            yield stub
+                            count += 1
+                            if on_progress:
+                                on_progress(count)
+                            if config.limit and count >= config.limit:
+                                return
+                            continue
                         try:
                             stats["fetched"] += 1
                             data = client.company_data(stub.inn)
