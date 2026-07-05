@@ -172,12 +172,9 @@ def pooled_api_get(session, pool: "KeyPool", url: str, params: dict,
                    timeout: float = 25.0, delay: float = 0.0) -> dict:
     """Запрос к API через пул ключей (для параллельного режима). При лимите/401/403
     ключ помечается мёртвым и берётся следующий; если живых нет — CheckoLimit."""
-    attempts = 0
-    max_attempts = pool.total() * 2 + 6
+    import sys
+    rate_retries = 0
     while True:
-        attempts += 1
-        if attempts > max_attempts:
-            raise CheckoLimit("исчерпаны попытки/ключи")
         key = pool.acquire()
         if key is None:
             raise CheckoLimit("все ключи исчерпали лимит")
@@ -185,18 +182,28 @@ def pooled_api_get(session, pool: "KeyPool", url: str, params: dict,
         p["key"] = key
         try:
             resp = session.get(url, params=p, timeout=timeout)
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            rate_retries += 1
+            if rate_retries > 6:
+                raise
+            print(f"  [api] сетевая ошибка ({type(exc).__name__}), повтор {rate_retries}/6", file=sys.stderr)
             time.sleep(1.0)
             continue
         if resp.status_code == 429:
-            time.sleep(2.0)
+            rate_retries += 1
+            if rate_retries > 8:
+                raise requests.RequestException("429 не проходит после 8 попыток")
+            print(f"  [api] 429 (частота), пауза 1.5с ({rate_retries}/8)", file=sys.stderr)
+            time.sleep(1.5)
             continue
         try:
             payload = resp.json()
         except ValueError:
             payload = None
         if (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403):
+            msg = (((payload or {}).get("meta") or {}).get("message") or f"HTTP {resp.status_code}")
             pool.mark_dead(key)
+            print(f"  [api] ключ исчерпан ({msg}); живых ключей осталось: {pool.alive()}", file=sys.stderr)
             continue
         resp.raise_for_status()
         if payload is None:
