@@ -153,12 +153,12 @@
 
       <div class="row">
         <div>
-          <label>API-ключ checko (если режим API)
+          <label>API-ключ checko (можно несколько через запятую — ротация)
             {% if key_saved %}<span style="color:#4ade80;">— сохранён ✓</span>{% endif %}
           </label>
           <div style="display:flex; gap:6px;">
             <input name="api_key" id="api_key_input" style="flex:1;"
-                   placeholder="{% if key_saved %}сохранён — можно пусто{% else %}ключ API{% endif %}">
+                   placeholder="{% if key_saved %}сохранён — можно пусто{% else %}ключ (или key1, key2, key3){% endif %}">
             <button type="button" class="savebtn" data-field="api_key" style="background:#334155;color:#e2e8f0;white-space:nowrap;margin:0;padding:9px 10px;">💾</button>
           </div>
           <div class="muted savehint" data-for="api_key"></div>

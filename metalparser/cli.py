@@ -127,8 +127,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"  просмотрено записей ЕГРЮЛ: {n}", file=sys.stderr)
 
-    # Докачка: пропускаем уже собранные (по существующему CSV) для source=site
-    skip = read_existing_keys(args.csv) if args.source == "site" else set()
+    # Докачка: пропускаем уже собранные (по существующему CSV) для api/site
+    skip = read_existing_keys(args.csv) if args.source in ("site", "api") else set()
     if skip:
         print(f"Докачка: в {args.csv} уже {len(skip)} компаний — пропускаю их.", file=sys.stderr)
 

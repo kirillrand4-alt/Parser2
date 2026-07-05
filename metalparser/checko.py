@@ -85,6 +85,34 @@ def _norm_phone(raw: str) -> str:
     return raw.strip()
 
 
+class CheckoLimit(Exception):
+    """Исчерпан лимит всех ключей (суточный лимит/недоступно на тарифе)."""
+
+
+def _parse_keys(api_key) -> list[str]:
+    """Список ключей из строки (через запятую/пробел/перенос) или списка."""
+    if isinstance(api_key, (list, tuple)):
+        raw = list(api_key)
+    else:
+        raw = re.split(r"[,\s;]+", api_key or "")
+    seen, out = set(), []
+    for k in raw:
+        k = (k or "").strip()
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _is_limit_meta(payload) -> bool:
+    """True, если тело ответа — ошибка лимита/доступа (суточный лимит и т.п.)."""
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    if not isinstance(meta, dict) or str(meta.get("status")).lower() != "error":
+        return False
+    msg = str(meta.get("message", "")).lower()
+    return any(w in msg for w in ("лимит", "тариф", "limit", "превыш", "доступ", "forbidden"))
+
+
 class CheckoClient:
     def __init__(
         self,
@@ -95,7 +123,8 @@ class CheckoClient:
         max_retries: int = 4,
         user_agent: str = DEFAULT_UA,
     ):
-        self.api_key = api_key or os.environ.get("CHECKO_API_KEY") or None
+        self.keys = _parse_keys(api_key or os.environ.get("CHECKO_API_KEY"))
+        self.ki = 0                       # индекс текущего ключа (ротация)
         self.prefer_api = prefer_api
         self.delay = delay
         self.timeout = timeout
@@ -103,6 +132,40 @@ class CheckoClient:
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent, "Accept-Language": "ru,en;q=0.8"})
         self._last_request = 0.0
+
+    # --- ротация ключей ---
+    @property
+    def api_key(self) -> str | None:
+        return self.keys[self.ki] if self.ki < len(self.keys) else None
+
+    def advance_key(self) -> bool:
+        """Переключиться на следующий ключ. True — есть ещё ключ."""
+        self.ki += 1
+        return self.ki < len(self.keys)
+
+    def _api_get(self, url: str, params: dict) -> dict:
+        """GET к API с подстановкой ключа и ротацией при исчерпании лимита."""
+        import sys
+        attempts = max(1, len(self.keys)) + 1
+        for _ in range(attempts):
+            params = dict(params)
+            params["key"] = self.api_key
+            resp = self._get(url, params=params)
+            try:
+                payload = resp.json()
+            except ValueError:
+                resp.raise_for_status()
+                raise
+            if _is_limit_meta(payload):
+                msg = (payload.get("meta") or {}).get("message", "лимит")
+                if self.advance_key():
+                    print(f"  [api] ключ #{self.ki} исчерпан ({msg}); переключаюсь "
+                          f"на следующий ({self.ki + 1}/{len(self.keys)})", file=sys.stderr)
+                    continue
+                raise CheckoLimit(msg)
+            resp.raise_for_status()
+            return payload
+        raise CheckoLimit("все ключи исчерпали лимит")
 
     # --- сетевой слой с троттлингом и backoff на 429 ---
     def _throttle(self):
@@ -134,19 +197,14 @@ class CheckoClient:
 
     # --- поиск компаний по ОКВЭД (/v2/search) ---
     def search_page(self, query: str, region: str | None, active: bool, page: int) -> dict:
-        """Одна страница выдачи /v2/search. Возвращает разобранный JSON."""
-        params = {"key": self.api_key}
-        params[SEARCH_PARAM["by"]] = SEARCH_BY_OKVED
-        params[SEARCH_PARAM["obj"]] = SEARCH_OBJ
-        params[SEARCH_PARAM["query"]] = query
-        params[SEARCH_PARAM["page"]] = page
+        """Одна страница выдачи /v2/search. Возвращает разобранный JSON (с ротацией ключей)."""
+        params = {SEARCH_PARAM["by"]: SEARCH_BY_OKVED, SEARCH_PARAM["obj"]: SEARCH_OBJ,
+                  SEARCH_PARAM["query"]: query, SEARCH_PARAM["page"]: page}
         if region:
             params[SEARCH_PARAM["region"]] = region
         if active:
             params[SEARCH_PARAM["active"]] = SEARCH_ACTIVE_VALUE
-        resp = self._get(SEARCH_URL, params=params)
-        resp.raise_for_status()
-        return resp.json()
+        return self._api_get(SEARCH_URL, params)
 
     @staticmethod
     def extract_search_total(payload: dict) -> int:
@@ -179,10 +237,8 @@ class CheckoClient:
         return node if isinstance(node, list) else []
 
     def company_data(self, inn: str) -> dict:
-        """Полный ответ /v2/company по ИНН (data-блок)."""
-        resp = self._get(API_URL, params={"key": self.api_key, "inn": inn})
-        resp.raise_for_status()
-        payload = resp.json()
+        """Полный ответ /v2/company по ИНН (data-блок), с ротацией ключей."""
+        payload = self._api_get(API_URL, {"inn": inn})
         return payload.get("data") or payload.get("Данные") or payload
 
     # --- публичный метод ---
@@ -205,10 +261,8 @@ class CheckoClient:
         key = company.inn or company.ogrn
         if not key:
             raise ValueError("нет ИНН/ОГРН для запроса")
-        resp = self._get(API_URL, params={"key": self.api_key, "inn": company.inn or None,
-                                          "ogrn": None if company.inn else company.ogrn})
-        resp.raise_for_status()
-        payload = resp.json()
+        params = {"inn": company.inn} if company.inn else {"ogrn": company.ogrn}
+        payload = self._api_get(API_URL, params)
         data = payload.get("data") or payload.get("Данные") or payload
         phones, emails, sites = _extract_contacts_from_json(data)
         company.phones = _uniq(_norm_phone(p) for p in phones)

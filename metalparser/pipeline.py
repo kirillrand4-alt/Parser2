@@ -61,7 +61,7 @@ def iter_run(
 
     skip — уже собранные ИНН/ОГРН (докачка, актуально для source='site')."""
     if config.source == "api":
-        yield from _iter_api(config, on_progress)
+        yield from _iter_api(config, on_progress, skip=skip)
     elif config.source == "site":
         yield from _iter_site(config, on_progress, skip=skip)
     else:
@@ -148,13 +148,17 @@ def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
             break
 
 
-def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
+def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> Iterator[Company]:
     import sys
+    from .checko import CheckoLimit
     matcher = _matcher(config)
     client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay)
+    if len(getattr(client, "keys", []) or []) > 1:
+        print(f"  [api] ключей в ротации: {len(client.keys)}", file=sys.stderr)
     # checko /v2/search ищет по точному коду-группе → разворачиваем префиксы
     queries = search_codes(matcher.prefixes)
     regions = config.regions or [None]               # None = вся РФ
+    skip = skip or set()
     seen: set[str] = set()
     count = 0
     for region in regions:
@@ -163,23 +167,20 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
             while page <= MAX_SEARCH_PAGES:
                 try:
                     payload = client.search_page(query, region, config.only_active, page)
-                except Exception as exc:  # noqa: BLE001 — напр. 403 (лимит/пагинация вне тарифа)
-                    print(f"  [api] {query} стр.{page}: {exc}. Беру только доступное по этому коду.",
+                except CheckoLimit as exc:
+                    print(f"  [api] {exc} — лимит всех ключей исчерпан, останавливаюсь "
+                          f"(собрано {count}). Продолжите позже — докачает.", file=sys.stderr)
+                    return
+                except Exception as exc:  # noqa: BLE001 — 403/пагинация вне тарифа по коду
+                    print(f"  [api] {query} стр.{page}: {exc}. Беру доступное по этому коду.",
                           file=sys.stderr)
                     break
-                # Ошибка API в теле ответа (напр. суточный лимит бесплатного тарифа)
-                meta = payload.get("meta") if isinstance(payload, dict) else None
-                if isinstance(meta, dict) and str(meta.get("status")).lower() == "error":
-                    print(f"  [api] checko: {meta.get('message', 'ошибка')} "
-                          f"(запросов сегодня: {meta.get('today_request_count')}). Останавливаюсь.",
-                          file=sys.stderr)
-                    return
                 records = client.extract_search_records(payload)
                 if not records:
                     break
                 for rec in records:
                     stub = company_from_search_record(rec)
-                    if not stub.inn or stub.inn in seen:
+                    if not stub.inn or stub.inn in seen or stub.inn in skip:
                         continue
                     seen.add(stub.inn)
                     # поиск идёт по точному осн. ОКВЭД → код известен заранее
@@ -191,6 +192,10 @@ def _iter_api(config: PipelineConfig, on_progress) -> Iterator[Company]:
                         fill_company_from_data(stub, data)
                         stub.enriched = True
                         stub.enrich_source = "api"
+                    except CheckoLimit as exc:
+                        print(f"  [api] {exc} — лимит всех ключей исчерпан (собрано {count}). "
+                              f"Продолжите позже — докачает.", file=sys.stderr)
+                        return
                     except Exception as exc:  # noqa: BLE001
                         stub.enrich_error = f"{type(exc).__name__}: {exc}"
                     # Пост-фильтр: основной ОКВЭД должен быть из целевых групп
@@ -219,13 +224,16 @@ def count_companies(config: PipelineConfig, delay: float | None = None):
     regions = config.regions or [None]
     per: list[tuple[str, int]] = []
     total = 0
+    from .checko import CheckoLimit
     for code in codes:
         c = 0
         for region in regions:
             try:
                 payload = client.search_page(code, region, config.only_active, 1)
                 c += client.extract_search_total(payload)
-            except Exception:  # noqa: BLE001 — код недоступен на тарифе/ошибка
+            except CheckoLimit:
+                return per, total          # все ключи исчерпаны — отдаём что есть
+            except Exception:  # noqa: BLE001 — код недоступен/ошибка по коду
                 pass
         per.append((code, c))
         total += c
