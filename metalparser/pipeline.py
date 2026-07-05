@@ -247,8 +247,9 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                                 inns.append(stub.inn)
                                 # режим «только список» — сразу отдаём без карточки
                                 if not config.enrich_contacts:
-                                    stub.okved_code = stub.okved_code or query
-                                    stub.okved_name = stub.okved_name or _okved_name(stub.okved_code)
+                                    # искали по точному коду query → он и есть ОКВЭД записи
+                                    stub.okved_code = query
+                                    stub.okved_name = _okved_name(query) or stub.okved_name
                                     stub.enrich_source = "api-list"
                                     yield stub
                                     count += 1
@@ -412,10 +413,10 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                         if stub.inn in seen or stub.inn in skip:
                             continue
                         seen.add(stub.inn)
-                        if not stub.okved_code:      # поиск по точному осн. ОКВЭД → код известен
-                            stub.okved_code = query
                         if not config.enrich_contacts:   # режим «только список»
-                            stub.okved_name = stub.okved_name or _okved_name(stub.okved_code)
+                            # искали по точному коду query → он и есть ОКВЭД записи
+                            stub.okved_code = query
+                            stub.okved_name = _okved_name(query) or stub.okved_name
                             stub.enrich_source = "api-list"
                             yield stub
                             count += 1

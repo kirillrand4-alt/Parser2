@@ -501,7 +501,14 @@ def company_from_search_record(rec: dict) -> Company:
         okved_code = str(_first(okved, OKVED_CODE_KEYS))
         okved_name = str(_first(okved, OKVED_NAME_KEYS))
     else:
-        okved_code, okved_name = str(okved or ""), ""
+        # В /v2/search ОКВЭД иногда приходит одной строкой — это может быть
+        # как код (25.62), так и НАИМЕНОВАНИЕ. Код кладём в okved_code,
+        # текст — в okved_name, чтобы не смешивать их в одной колонке.
+        s = str(okved or "").strip()
+        if re.match(r"^\d{2}(\.\d+)*$", s):
+            okved_code, okved_name = s, ""
+        else:
+            okved_code, okved_name = "", s
     inn = str(_first(rec, SEARCH_INN_KEYS) or "") or _deep_find_inn(rec)
     return Company(
         inn=inn,
