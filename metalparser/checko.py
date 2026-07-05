@@ -160,6 +160,7 @@ class CheckoClient:
     def _api_get(self, url: str, params: dict) -> dict:
         """GET к API с подстановкой ключа и ротацией при исчерпании лимита/401/403."""
         import sys
+        debug = os.environ.get("CHECKO_DEBUG") == "1"
         attempts = max(1, len(self.keys)) + 1
         for _ in range(attempts):
             params = dict(params)
@@ -169,16 +170,30 @@ class CheckoClient:
                 payload = resp.json()
             except ValueError:
                 payload = None
-            # исчерпан лимит (в теле) или ключ отклонён (401/403) → следующий ключ
-            if (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403):
-                reason = (((payload or {}).get("meta") or {}).get("message")
-                          or f"HTTP {resp.status_code}")
+            meta = (payload or {}).get("meta") if isinstance(payload, dict) else None
+            if debug:
+                import json as _json
+                body = _json.dumps(payload, ensure_ascii=False)[:400] if payload is not None else resp.text[:400]
+                print(f"  [api DEBUG] ключ #{self.ki + 1} HTTP {resp.status_code} → {body}", file=sys.stderr)
+            # ротация ТОЛЬКО при реальном отказе: лимит в теле или 401/403
+            is_reject = (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403)
+            if is_reject:
+                srv = ""
+                if isinstance(meta, dict):
+                    srv = str(meta.get("message", "")).strip()
+                    trc = meta.get("today_request_count")
+                    if trc is not None:
+                        srv += f"; запросов у ключа: {trc}"
+                reason = srv or f"HTTP {resp.status_code}"
                 failed = self.ki + 1
                 if self.advance_key():
-                    print(f"  [api] ключ #{failed} не подошёл ({reason}); перехожу "
+                    print(f"  [api] ключ #{failed}: ОТВЕТ СЕРВЕРА → {reason}; перехожу "
                           f"к #{self.ki + 1}/{len(self.keys)}", file=sys.stderr)
                     continue
                 raise CheckoLimit(reason)
+            # иная ошибка в теле (не лимит) — покажем и не будем молча глотать
+            if isinstance(meta, dict) and str(meta.get("status")).lower() == "error":
+                print(f"  [api] ОТВЕТ СЕРВЕРА (ошибка, не лимит) → {meta.get('message')}", file=sys.stderr)
             resp.raise_for_status()
             if payload is None:
                 raise requests.RequestException(f"не-JSON ответ от {url}")
