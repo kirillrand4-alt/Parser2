@@ -58,6 +58,20 @@ def read_inns(path: str) -> list[str]:
     return out
 
 
+def _fmt(c, num) -> str:
+    """Строка лога: вся собранная инфа по компании (ОКВЭД осн.+доп., контакты)."""
+    tel = ", ".join(c.phones) if c.phones else "—"
+    mail = ", ".join(c.emails) if c.emails else "—"
+    site = ", ".join(c.websites) if c.websites else "—"
+    extra = f" +доп.ОКВЭД: {len(c.okved_extra)}" if getattr(c, "okved_extra", None) else ""
+    okved = c.okved_code or "—"
+    status = f" [{c.status}]" if c.status else ""
+    err = f"  ОШИБКА: {c.enrich_error}" if c.enrich_error else ""
+    name = (c.name or "")[:40]
+    return (f"[{num}] {c.inn:<12} {name:<40}{status} | осн.ОКВЭД {okved}{extra} | "
+            f"тел: {tel} | почта: {mail} | сайт: {site}{err}")
+
+
 def main():
     p = argparse.ArgumentParser(description="Дообогащение контактов по списку ИНН (без поиска).")
     p.add_argument("--input", required=True, help="CSV со столбцом ИНН или txt с ИНН по строке")
@@ -87,8 +101,7 @@ def main():
         for c in iter_enrich(config, inns, skip=skip):
             appender.write(c)
             n += 1
-            tel = c.phones[0] if c.phones else "—"
-            print(f"[{len(skip) + n}] {c.inn} {(c.name or '')[:40]} | тел: {tel}", flush=True)
+            print(_fmt(c, len(skip) + n), flush=True)
     except KeyboardInterrupt:
         print("Остановлено — собранное сохранено.")
     finally:
