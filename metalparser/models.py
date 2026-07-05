@@ -18,6 +18,7 @@ class Company:
     full_name: str = ""            # полное наименование
     okved_code: str = ""           # основной ОКВЭД
     okved_name: str = ""           # расшифровка основного ОКВЭД
+    okved_extra: list[str] = field(default_factory=list)  # дополнительные ОКВЭД (коды)
     region: str = ""
     status: str = ""               # статус (Действующее и т.п.)
     address: str = ""
@@ -39,6 +40,7 @@ class Company:
             "Полное название": self.full_name,
             "Основной ОКВЭД": self.okved_code,
             "Вид деятельности": self.okved_name,
+            "Доп. ОКВЭД": "; ".join(self.okved_extra),
             "Регион": self.region,
             "Статус": self.status,
             "Адрес": self.address,

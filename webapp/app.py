@@ -126,6 +126,7 @@ def parse_selection(f) -> dict:
         "source": f.get("source", "api"),
         "okved": parse_okved_codes(f),
         "only_active": f.get("only_active", "on") == "on",
+        "main_okved_only": f.get("main_okved_only") == "on",
         "delay": float(f.get("delay", "1.5") or 1.5),
         "browser": f.get("browser") == "on",
         "regions": [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()],
@@ -157,7 +158,7 @@ def _auto_config(sel: dict) -> PipelineConfig:
     saved = load_saved()
     return PipelineConfig(
         source=sel.get("source", "api"), okved_set="none", extra_okved=sel.get("okved", []),
-        only_active=sel.get("only_active", True),
+        only_active=sel.get("only_active", True), main_okved_only=sel.get("main_okved_only", False),
         api_key=resolve_api_key(None), cookie=resolve_cookie(None),
         browser=sel.get("browser", False), user_agent=saved.get("ua") or os.environ.get("CHECKO_UA"),
         delay=sel.get("delay", 1.5), regions=sel.get("regions", []),
@@ -390,6 +391,7 @@ def start():
         okved_set="none",
         extra_okved=okved_codes,
         only_active=f.get("only_active", "on") == "on",
+        main_okved_only=f.get("main_okved_only") == "on",
         enrich=enrich_mode != "none",
         prefer_api=enrich_mode == "api",
         api_key=api_key,

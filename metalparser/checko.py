@@ -345,6 +345,21 @@ def extract_main_okved(data) -> tuple[str, str]:
     return "", ""
 
 
+def extract_extra_okved(data) -> list[str]:
+    """Коды дополнительных ОКВЭД из ответа /v2/company (поле ОКВЭДДоп)."""
+    extra = _first(data, ("ОКВЭДДоп", "ОКВЭДдоп", "okvedDop"))
+    out = []
+    if isinstance(extra, list):
+        for it in extra:
+            if isinstance(it, dict):
+                c = str(_first(it, OKVED_CODE_KEYS) or "").strip()
+                if c:
+                    out.append(c)
+            elif isinstance(it, str) and it.strip():
+                out.append(it.strip())
+    return out
+
+
 def fill_company_from_data(company: Company, data: dict) -> Company:
     """Заполняет поля Company из ответа /v2/company (имя, ОКВЭД, регион, контакты)."""
     company.name = str(_first(data, COMPANY_NAME_KEYS) or company.name)
@@ -353,6 +368,7 @@ def fill_company_from_data(company: Company, data: dict) -> Company:
     code, name = extract_main_okved(data)
     company.okved_code = code or company.okved_code
     company.okved_name = name or company.okved_name
+    company.okved_extra = extract_extra_okved(data) or company.okved_extra
     region = _first(data, COMPANY_REGION_KEYS)
     company.region = (region if isinstance(region, str) else _first(region, ("Наим", "name"))) or company.region
     status = _first(data, COMPANY_STATUS_KEYS)

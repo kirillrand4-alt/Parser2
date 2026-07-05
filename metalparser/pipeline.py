@@ -37,6 +37,7 @@ class PipelineConfig:
     okved_set: str = "core"
     extra_okved: list[str] = field(default_factory=list)
     only_active: bool = True
+    main_okved_only: bool = False      # True — оставлять только тех, у кого код ОСНОВНОЙ
     enrich: bool = True                # для egrul: тянуть ли контакты
     api_key: str | None = None
     cookie: str | None = None          # для source='site': куки авторизации checko
@@ -209,12 +210,14 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                         except Exception as exc:  # noqa: BLE001
                             stub.enrich_error = f"{type(exc).__name__}: {exc}"
                             stats["errors"] += 1
-                        # Пост-фильтр: основной ОКВЭД из целевых групп
-                        if not matcher.matches(stub.okved_code):
+                        # Пост-фильтр по основному ОКВЭД — ТОЛЬКО если явно включён.
+                        # По умолчанию оставляем и тех, у кого код дополнительный
+                        # (карточка уже оплачена — запрос не пропадает зря).
+                        if config.main_okved_only and not matcher.matches(stub.okved_code):
                             stats["drop_okved"] += 1
                             if debug:
                                 print(f"  [api DEBUG] {stub.inn} осн.ОКВЭД={stub.okved_code} "
-                                      f"(искали {query}) → ОТСЕЯН: не в списке", file=sys.stderr)
+                                      f"(искали {query}) → ОТСЕЯН: код не основной", file=sys.stderr)
                             continue
                         if config.only_active and stub.status and not _is_active_status(stub.status):
                             stats["drop_inactive"] += 1

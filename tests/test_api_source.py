@@ -56,8 +56,9 @@ def test_api_source(monkeypatch):
     companies = run(config)
     by_inn = {c.inn: c for c in companies}
 
-    # 333 отсеян (осн. ОКВЭД 62.01); 444 отсеян (недействующее); 111 не задублирован
-    assert set(by_inn) == {"111", "222"}
+    # По умолчанию берём и тех, у кого код дополнительный → 333 (осн. 62.01) остаётся;
+    # 444 отсеян (недействующее); 111 не задублирован
+    assert set(by_inn) == {"111", "222", "333"}
     a = by_inn["111"]
     assert a.name == "ООО А"
     assert a.okved_code == "25.62"
@@ -65,6 +66,14 @@ def test_api_source(monkeypatch):
     assert a.phones == ["+7 (495) 111-22-33"]
     assert a.emails == ["a@a.ru"]
     assert a.enrich_source == "api"
+
+
+def test_api_main_okved_only(monkeypatch):
+    monkeypatch.setattr(pipeline, "CheckoClient", FakeClient)
+    # main_okved_only=True → 333 (осн. 62.01) отсеивается
+    config = PipelineConfig(source="api", okved_set="core", api_key="x", delay=0,
+                            main_okved_only=True)
+    assert {c.inn for c in run(config)} == {"111", "222"}
 
 
 def test_api_inactive_filtered_only_when_active(monkeypatch):

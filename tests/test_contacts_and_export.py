@@ -30,6 +30,14 @@ def test_html_extraction():
     assert all(".png" not in s for s in sites)
 
 
+def test_extract_extra_okved():
+    from metalparser.checko import extract_extra_okved
+    data = {"ОКВЭД": {"Код": "25.62"}, "ОКВЭДДоп": [
+        {"Код": "46.72", "Наим": "Торговля"}, {"Код": "25.61", "Наим": "Покрытия"}]}
+    assert extract_extra_okved(data) == ["46.72", "25.61"]
+    assert extract_extra_okved({}) == []
+
+
 def test_json_extraction():
     data = {
         "НаимСокр": "ООО ТЕСТ",

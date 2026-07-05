@@ -9,7 +9,7 @@ from .models import Company
 
 COLUMNS = [
     "ИНН", "ОГРН", "Название", "Полное название", "Основной ОКВЭД",
-    "Вид деятельности", "Регион", "Статус", "Адрес",
+    "Вид деятельности", "Доп. ОКВЭД", "Регион", "Статус", "Адрес",
     "Телефоны", "Почты", "Сайты", "Источник контактов", "Ошибка обогащения",
 ]
 
@@ -69,7 +69,7 @@ def write_excel_from_csv(csv_path: str, xlsx_path: str) -> int:
                 ws.append([row.get(col, "") for col in COLUMNS])
                 n += 1
     widths = {"Название": 40, "Полное название": 50, "Вид деятельности": 45,
-              "Адрес": 50, "Телефоны": 25, "Почты": 30, "Сайты": 30}
+              "Доп. ОКВЭД": 28, "Адрес": 50, "Телефоны": 25, "Почты": 30, "Сайты": 30}
     for i, col in enumerate(COLUMNS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = widths.get(col, 16)
     wb.save(xlsx_path)
@@ -109,7 +109,7 @@ def write_excel(companies: Iterable[Company], path: str) -> int:
 
     # ширина колонок (грубая автоподгонка)
     widths = {"Название": 40, "Полное название": 50, "Вид деятельности": 45,
-              "Адрес": 50, "Телефоны": 25, "Почты": 30, "Сайты": 30}
+              "Доп. ОКВЭД": 28, "Адрес": 50, "Телефоны": 25, "Почты": 30, "Сайты": 30}
     for i, col in enumerate(COLUMNS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = widths.get(col, 16)
 
