@@ -172,9 +172,15 @@ class CheckoClient:
                 payload = None
             meta = (payload or {}).get("meta") if isinstance(payload, dict) else None
             if debug:
-                import json as _json
-                body = _json.dumps(payload, ensure_ascii=False)[:400] if payload is not None else resp.text[:400]
-                print(f"  [api DEBUG] ключ #{self.ki + 1} HTTP {resp.status_code} → {body}", file=sys.stderr)
+                data = (payload or {}).get("data") if isinstance(payload, dict) else None
+                okv = data.get("ОКВЭД") if isinstance(data, dict) else None
+                if okv is not None:
+                    print(f"  [api DEBUG] ключ #{self.ki + 1} HTTP {resp.status_code} | "
+                          f"ОКВЭД={okv}", file=sys.stderr)
+                else:
+                    import json as _json
+                    body = _json.dumps(payload, ensure_ascii=False)[:300] if payload is not None else resp.text[:300]
+                    print(f"  [api DEBUG] ключ #{self.ki + 1} HTTP {resp.status_code} → {body}", file=sys.stderr)
             # ротация ТОЛЬКО при реальном отказе: лимит в теле или 401/403
             is_reject = (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403)
             if is_reject:

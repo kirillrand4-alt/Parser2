@@ -149,8 +149,10 @@ def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
 
 
 def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> Iterator[Company]:
+    import os
     import sys
     from .checko import CheckoLimit
+    debug = os.environ.get("CHECKO_DEBUG") == "1"
     matcher = _matcher(config)
     client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay)
     if len(getattr(client, "keys", []) or []) > 1:
@@ -210,10 +212,19 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                         # Пост-фильтр: основной ОКВЭД из целевых групп
                         if not matcher.matches(stub.okved_code):
                             stats["drop_okved"] += 1
+                            if debug:
+                                print(f"  [api DEBUG] {stub.inn} осн.ОКВЭД={stub.okved_code} "
+                                      f"(искали {query}) → ОТСЕЯН: не в списке", file=sys.stderr)
                             continue
                         if config.only_active and stub.status and not _is_active_status(stub.status):
                             stats["drop_inactive"] += 1
+                            if debug:
+                                print(f"  [api DEBUG] {stub.inn} статус '{stub.status}' → ОТСЕЯН",
+                                      file=sys.stderr)
                             continue
+                        if debug:
+                            print(f"  [api DEBUG] {stub.inn} осн.ОКВЭД={stub.okved_code} → ВЗЯТ",
+                                  file=sys.stderr)
                         yield stub
                         count += 1
                         if on_progress:
