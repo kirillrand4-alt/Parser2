@@ -110,6 +110,10 @@ def build_parser():
     p.add_argument("--delay", type=float, default=1.5)
     p.add_argument("--concurrency", type=int, default=3, help="одновременных запросов к API")
     p.add_argument("--all-statuses", action="store_true")
+    p.add_argument("--no-contacts", action="store_true",
+                   help="только список (поиск, без карточек/контактов) — быстро; контакты добрать enrich_contacts.py")
+    p.add_argument("--main-okved-only", action="store_true",
+                   help="только те, у кого код — ОСНОВНОЙ")
     p.add_argument("--browser", action="store_true", help="site: через настоящий браузер")
     p.add_argument("--loop", action="store_true", help="повторять автоматически")
     p.add_argument("--interval", type=float, default=24.0, help="часы между прогонами в --loop")
@@ -128,6 +132,8 @@ def main():
     config = PipelineConfig(
         source=args.source, okved_set="none", extra_okved=codes,
         only_active=not args.all_statuses,
+        main_okved_only=args.main_okved_only,
+        enrich_contacts=not args.no_contacts,
         api_key=(read_keys_file(_KEYS_FILE) or os.environ.get("CHECKO_API_KEY") or _saved("api_key")),
         cookie=os.environ.get("CHECKO_COOKIE") or _saved("cookie"),
         browser=args.browser,
