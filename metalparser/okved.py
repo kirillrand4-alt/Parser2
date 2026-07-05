@@ -184,19 +184,21 @@ def search_codes(prefixes: list[str]) -> list[str]:
     prefixes = [normalize_code(p) for p in prefixes]
     out: list[str] = []
     seen: set[str] = set()
-    matched: set[str] = set()
     catalog = ALL_GROUP_CODES or METAL_GROUP_CODES  # полный справочник, иначе металл
-    for code in catalog:
-        for p in prefixes:
+    # Идём по префиксам В ЗАДАННОМ ПОРЯДКЕ (чтобы 24/25 из okved.txt шли первыми);
+    # каждый разворачиваем в его коды-группы.
+    for p in prefixes:
+        if not p:
+            continue
+        matched_any = False
+        for code in catalog:
             if _matches_prefix(code, p):
-                matched.add(p)
+                matched_any = True
                 if code not in seen:
                     seen.add(code)
                     out.append(code)
-                break
-    # префикс, не покрытый справочником (напр. пользовательский 62.01), — как есть
-    for p in prefixes:
-        if p and p not in matched and p not in seen:
+        # префикс без совпадений в справочнике (напр. подгруппа 25.30.1) — как есть
+        if not matched_any and p not in seen:
             seen.add(p)
             out.append(p)
     return out
