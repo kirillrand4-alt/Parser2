@@ -173,9 +173,10 @@ class CheckoClient:
             if (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403):
                 reason = (((payload or {}).get("meta") or {}).get("message")
                           or f"HTTP {resp.status_code}")
+                failed = self.ki + 1
                 if self.advance_key():
-                    print(f"  [api] ключ #{self.ki} не подошёл ({reason}); переключаюсь "
-                          f"на следующий ({self.ki + 1}/{len(self.keys)})", file=sys.stderr)
+                    print(f"  [api] ключ #{failed} не подошёл ({reason}); перехожу "
+                          f"к #{self.ki + 1}/{len(self.keys)}", file=sys.stderr)
                     continue
                 raise CheckoLimit(reason)
             resp.raise_for_status()
