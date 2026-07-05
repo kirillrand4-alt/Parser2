@@ -183,6 +183,22 @@
         Подсчитать (без скачивания)
       </button>
       <div id="countresult" class="muted" style="margin-top:12px;"></div>
+
+      <div style="margin-top:18px; padding:14px; border:1px solid #334155; border-radius:10px; background:#0b1220;">
+        <b>🔁 Автосбор в общую базу</b>
+        <div class="muted" style="margin:4px 0 10px;">Периодически дособирает НОВЫЕ компании по выбранным выше ОКВЭД в единую базу
+          <code>data/base.csv</code> (докачка — уже собранных пропускает). Работает в фоне и переживает перезапуск.</div>
+        <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+          <div style="width:150px;">
+            <label>Интервал, часов</label>
+            <input type="number" name="interval" value="24" step="1" min="1">
+          </div>
+          <button type="button" id="autostart">Включить автосбор</button>
+          <button type="button" id="autorun" style="background:#334155;color:#e2e8f0;">Собрать сейчас</button>
+          <button type="button" id="autostop" style="background:#334155;color:#e2e8f0;">Выключить</button>
+        </div>
+        <div id="autostatus" class="muted" style="margin-top:10px;"></div>
+      </div>
     </form>
   </div>
 
@@ -279,6 +295,31 @@ document.getElementById('clearokv').addEventListener('click', () => {
 const form = document.getElementById('form');
 const runbtn = document.getElementById('runbtn');
 let timer = null;
+
+// Автосбор в общую базу
+const autostatus = document.getElementById('autostatus');
+function renderAuto(s) {
+  if (!s || (s.error && !('enabled' in s))) { autostatus.textContent = (s && s.error) || ''; return; }
+  autostatus.innerHTML =
+    `Автосбор: <b>${s.enabled ? 'включён' : 'выключен'}</b>${s.running ? ' · <span style="color:#38bdf8;">идёт сбор…</span>' : ''}<br>` +
+    `В базе: <b>${(s.total || 0).toLocaleString('ru')}</b> · последний прогон: ${s.last_run || '—'} (+${s.last_added || 0}) · следующий: ${s.next_run || '—'}` +
+    (s.error ? `<br><span style="color:#fca5a5;">${s.error}</span>` : '');
+}
+async function autoPost(url) {
+  const r = await fetch(BASE + url, { method: 'POST', body: new FormData(form) });
+  return r.json();
+}
+document.getElementById('autostart').addEventListener('click', async () => { renderAuto(await autoPost('/auto/start')); });
+document.getElementById('autostop').addEventListener('click', async () => { renderAuto(await autoPost('/auto/stop')); });
+document.getElementById('autorun').addEventListener('click', async () => {
+  const d = await autoPost('/auto/run-now');
+  if (d.error) autostatus.textContent = d.error;
+});
+setInterval(async () => {
+  const r = await fetch(BASE + '/auto/status');
+  if (r.ok) renderAuto(await r.json());
+}, 5000);
+fetch(BASE + '/auto/status').then(r => r.ok && r.json().then(renderAuto)).catch(() => {});
 
 // Сохранение кук / ключа на сервере (в data/secrets.json)
 document.querySelectorAll('.savebtn').forEach(btn => {

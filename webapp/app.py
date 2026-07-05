@@ -35,7 +35,7 @@ from flask import (
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from metalparser.export import CsvAppender, write_excel_from_csv
+from metalparser.export import CsvAppender, write_excel_from_csv, read_existing_keys
 from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_TREE
 from metalparser.pipeline import PipelineConfig, iter_run, count_companies
 
@@ -101,6 +101,109 @@ def parse_okved_codes(form) -> list[str]:
 # Состояние задач в памяти (один процесс). job_id -> dict
 JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
+
+# ---------- Автосбор в общую базу (data/base.csv), фоновый цикл ----------
+BASE_CSV = os.path.join(OUTPUT_DIR, "base.csv")
+BASE_XLSX = os.path.join(OUTPUT_DIR, "base.xlsx")
+AUTO_PATH = os.path.join(OUTPUT_DIR, "auto.json")
+AUTO = {"enabled": False, "interval": 24.0, "sel": None, "running": False,
+        "last_run": "", "last_added": 0, "total": 0, "next_run": "", "error": ""}
+_AUTO_THREAD = None
+
+
+def _now():
+    return time.strftime("%Y-%m-%d %H:%M")
+
+
+def parse_selection(f) -> dict:
+    """Выбор параметров сбора из формы (без секретов — ключи/куки берутся при запуске)."""
+    return {
+        "source": f.get("source", "api"),
+        "okved": parse_okved_codes(f),
+        "only_active": f.get("only_active", "on") == "on",
+        "delay": float(f.get("delay", "1.5") or 1.5),
+        "browser": f.get("browser") == "on",
+        "regions": [r.strip() for r in (f.get("regions") or "").replace(",", " ").split() if r.strip()],
+    }
+
+
+def _auto_save():
+    try:
+        with open(AUTO_PATH, "w", encoding="utf-8") as fh:
+            json.dump({"enabled": AUTO["enabled"], "interval": AUTO["interval"],
+                       "sel": AUTO["sel"]}, fh, ensure_ascii=False)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _auto_load():
+    try:
+        with open(AUTO_PATH, encoding="utf-8") as fh:
+            d = json.load(fh)
+        AUTO["enabled"] = bool(d.get("enabled"))
+        AUTO["interval"] = float(d.get("interval") or 24.0)
+        AUTO["sel"] = d.get("sel")
+        AUTO["total"] = len(read_existing_keys(BASE_CSV))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _auto_config(sel: dict) -> PipelineConfig:
+    saved = load_saved()
+    return PipelineConfig(
+        source=sel.get("source", "api"), okved_set="none", extra_okved=sel.get("okved", []),
+        only_active=sel.get("only_active", True),
+        api_key=resolve_api_key(None), cookie=resolve_cookie(None),
+        browser=sel.get("browser", False), user_agent=saved.get("ua") or os.environ.get("CHECKO_UA"),
+        delay=sel.get("delay", 1.5), regions=sel.get("regions", []),
+    )
+
+
+def _auto_run_once():
+    sel = AUTO["sel"]
+    if not sel or not sel.get("okved"):
+        return
+    with _LOCK:
+        AUTO["running"] = True
+        AUTO["error"] = ""
+    n = 0
+    appender = CsvAppender(BASE_CSV)
+    try:
+        for c in iter_run(_auto_config(sel), skip=read_existing_keys(BASE_CSV)):
+            appender.write(c)
+            n += 1
+        appender.close()
+        write_excel_from_csv(BASE_CSV, BASE_XLSX)
+        with _LOCK:
+            AUTO["last_added"] = n
+            AUTO["total"] = len(read_existing_keys(BASE_CSV))
+            AUTO["last_run"] = _now()
+    except Exception as exc:  # noqa: BLE001
+        appender.close()
+        with _LOCK:
+            AUTO["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        with _LOCK:
+            AUTO["running"] = False
+
+
+def _auto_loop():
+    while AUTO["enabled"]:
+        _auto_run_once()
+        total = max(60.0, AUTO["interval"] * 3600)
+        AUTO["next_run"] = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() + total))
+        slept = 0.0
+        while AUTO["enabled"] and slept < total:
+            time.sleep(min(30.0, total - slept))
+            slept += 30.0
+
+
+def _auto_ensure_thread():
+    global _AUTO_THREAD
+    if _AUTO_THREAD and _AUTO_THREAD.is_alive():
+        return
+    _AUTO_THREAD = threading.Thread(target=_auto_loop, daemon=True)
+    _AUTO_THREAD.start()
 
 
 def login_required(view):
@@ -202,6 +305,55 @@ def save_secret():
     return jsonify({"saved": True,
                     "cookie": bool(load_saved().get("cookie")),
                     "api_key": bool(load_saved().get("api_key"))})
+
+
+def _auto_status_payload():
+    with _LOCK:
+        return {k: AUTO[k] for k in
+                ("enabled", "interval", "running", "last_run", "last_added", "total", "next_run", "error")}
+
+
+@app.route("/auto/start", methods=["POST"])
+@login_required
+def auto_start():
+    sel = parse_selection(request.form)
+    if not sel["okved"]:
+        return jsonify({"error": "Выберите ОКВЭД (галочки или список) для автосбора"}), 400
+    AUTO["sel"] = sel
+    AUTO["interval"] = float(request.form.get("interval", "24") or 24)
+    AUTO["enabled"] = True
+    _auto_save()
+    _auto_ensure_thread()
+    return jsonify(_auto_status_payload())
+
+
+@app.route("/auto/stop", methods=["POST"])
+@login_required
+def auto_stop():
+    AUTO["enabled"] = False
+    _auto_save()
+    return jsonify(_auto_status_payload())
+
+
+@app.route("/auto/run-now", methods=["POST"])
+@login_required
+def auto_run_now():
+    sel = parse_selection(request.form)
+    if sel["okved"]:
+        AUTO["sel"] = sel
+        _auto_save()
+    if not AUTO["sel"]:
+        return jsonify({"error": "Сначала задайте ОКВЭД"}), 400
+    if AUTO["running"]:
+        return jsonify({"error": "Уже идёт сбор — подождите"}), 409
+    threading.Thread(target=_auto_run_once, daemon=True).start()
+    return jsonify({"started": True})
+
+
+@app.route("/auto/status")
+@login_required
+def auto_status():
+    return jsonify(_auto_status_payload())
 
 
 @app.route("/start", methods=["POST"])
@@ -334,6 +486,12 @@ def files_download(name: str):
     if not path.startswith(os.path.normpath(OUTPUT_DIR) + os.sep) or not os.path.isfile(path):
         abort(404)
     return send_file(path, as_attachment=True, download_name=name)
+
+
+# Восстановление автосбора при старте (переживает перезапуск serve.py)
+_auto_load()
+if AUTO["enabled"] and AUTO["sel"]:
+    _auto_ensure_thread()
 
 
 if __name__ == "__main__":
