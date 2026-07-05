@@ -144,7 +144,7 @@ class CheckoClient:
         return self.ki < len(self.keys)
 
     def _api_get(self, url: str, params: dict) -> dict:
-        """GET к API с подстановкой ключа и ротацией при исчерпании лимита."""
+        """GET к API с подстановкой ключа и ротацией при исчерпании лимита/401/403."""
         import sys
         attempts = max(1, len(self.keys)) + 1
         for _ in range(attempts):
@@ -154,18 +154,21 @@ class CheckoClient:
             try:
                 payload = resp.json()
             except ValueError:
-                resp.raise_for_status()
-                raise
-            if _is_limit_meta(payload):
-                msg = (payload.get("meta") or {}).get("message", "лимит")
+                payload = None
+            # исчерпан лимит (в теле) или ключ отклонён (401/403) → следующий ключ
+            if (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403):
+                reason = (((payload or {}).get("meta") or {}).get("message")
+                          or f"HTTP {resp.status_code}")
                 if self.advance_key():
-                    print(f"  [api] ключ #{self.ki} исчерпан ({msg}); переключаюсь "
+                    print(f"  [api] ключ #{self.ki} не подошёл ({reason}); переключаюсь "
                           f"на следующий ({self.ki + 1}/{len(self.keys)})", file=sys.stderr)
                     continue
-                raise CheckoLimit(msg)
+                raise CheckoLimit(reason)
             resp.raise_for_status()
+            if payload is None:
+                raise requests.RequestException(f"не-JSON ответ от {url}")
             return payload
-        raise CheckoLimit("все ключи исчерпали лимит")
+        raise CheckoLimit("все ключи исчерпаны/недействительны")
 
     # --- сетевой слой с троттлингом и backoff на 429 ---
     def _throttle(self):

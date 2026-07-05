@@ -44,6 +44,22 @@ def test_rotation_switches(monkeypatch):
     assert c.api_key == "k2"
 
 
+def test_rotation_on_401(monkeypatch):
+    c = CheckoClient(api_key="bad,good", delay=0)
+    used = []
+
+    def fake_get(url, params=None):
+        used.append(params["key"])
+        if params["key"] == "bad":
+            return FakeResp({"meta": {"status": "error", "message": "неверный ключ"}}, status=401)
+        return FakeResp(OK)
+
+    monkeypatch.setattr(c, "_get", fake_get)
+    payload = c.search_page("25.62", None, True, 1)
+    assert c.extract_search_records(payload) == [{"ИНН": "1"}]
+    assert used == ["bad", "good"]      # 401 → перешли на следующий ключ
+
+
 def test_rotation_all_exhausted(monkeypatch):
     c = CheckoClient(api_key="k1,k2", delay=0)
 
