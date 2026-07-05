@@ -73,15 +73,43 @@ def _fmt(c, n, total_before):
             f"тел: {tel}  почта: {mail}  сайт: {site}{extra}{err}")
 
 
+def _progress_path(csv_path: str) -> str:
+    """Сайдкар-файл с кодами ОКВЭД, уже полностью пройденными (для докачки)."""
+    return os.path.splitext(csv_path)[0] + ".progress.json"
+
+
+def _load_done(csv_path: str) -> set:
+    try:
+        with open(_progress_path(csv_path), encoding="utf-8") as f:
+            return set(json.load(f).get("done_codes", []))
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _save_done(csv_path: str, done: set) -> None:
+    tmp = _progress_path(csv_path) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"done_codes": sorted(done)}, f, ensure_ascii=False)
+    os.replace(tmp, _progress_path(csv_path))
+
+
 def run_once(config: PipelineConfig, csv_path: str, xlsx_path: str | None) -> int:
     skip = read_existing_keys(csv_path)
     total_before = len(skip)
+    done = _load_done(csv_path)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    print(f"[{stamp}] старт. В базе уже {total_before} — пропускаю их, добираю новых.", flush=True)
+    done_note = f", кодов уже пройдено: {len(done)} (их поиск пропущу)" if done else ""
+    print(f"[{stamp}] старт. В базе уже {total_before} — пропускаю их, добираю новых{done_note}.",
+          flush=True)
     app = CsvAppender(csv_path)
     n = 0
+
+    def on_code_done(code):
+        done.add(code)
+        _save_done(csv_path, done)
+
     try:
-        for c in iter_run(config, skip=skip):
+        for c in iter_run(config, skip=skip, done_codes=done, on_code_done=on_code_done):
             app.write(c)
             n += 1
             print(_fmt(c, n, total_before), flush=True)

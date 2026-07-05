@@ -155,6 +155,26 @@ def _auto_load():
         pass
 
 
+def _progress_path(csv_path: str) -> str:
+    """Сайдкар-файл с кодами ОКВЭД, уже полностью пройденными (для докачки)."""
+    return os.path.splitext(csv_path)[0] + ".progress.json"
+
+
+def _load_done(csv_path: str) -> set:
+    try:
+        with open(_progress_path(csv_path), encoding="utf-8") as fh:
+            return set(json.load(fh).get("done_codes", []))
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _save_done(csv_path: str, done: set) -> None:
+    tmp = _progress_path(csv_path) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"done_codes": sorted(done)}, fh, ensure_ascii=False)
+    os.replace(tmp, _progress_path(csv_path))
+
+
 def _auto_config(sel: dict) -> PipelineConfig:
     saved = load_saved()
     return PipelineConfig(
@@ -176,8 +196,15 @@ def _auto_run_once():
         AUTO["error"] = ""
     n = 0
     appender = CsvAppender(BASE_CSV)
+    done = _load_done(BASE_CSV)
+
+    def on_code_done(code):
+        done.add(code)
+        _save_done(BASE_CSV, done)
+
     try:
-        for c in iter_run(_auto_config(sel), skip=read_existing_keys(BASE_CSV)):
+        for c in iter_run(_auto_config(sel), skip=read_existing_keys(BASE_CSV),
+                          done_codes=done, on_code_done=on_code_done):
             appender.write(c)
             n += 1
         appender.close()

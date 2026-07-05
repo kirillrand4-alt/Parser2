@@ -63,15 +63,22 @@ def iter_run(
     config: PipelineConfig,
     on_progress: Callable[[int], None] | None = None,
     skip: set | None = None,
+    done_codes: set | None = None,
+    on_code_done: Callable[[str], None] | None = None,
 ) -> Iterator[Company]:
     """Отдаёт подходящие компании по мере готовности (с контактами).
 
-    skip — уже собранные ИНН/ОГРН (докачка, актуально для source='site')."""
+    skip — уже собранные ИНН/ОГРН (докачка, актуально для source='site').
+    done_codes — коды ОКВЭД, уже полностью пройденные в прошлых прогонах:
+        их поиск пропускаем целиком (не пролистываем заново).
+    on_code_done(code) — колбэк, когда код пройден до конца (для чекпоинта)."""
     if config.source == "api":
         if config.concurrency and config.concurrency > 1:
-            yield from _iter_api_parallel(config, on_progress, skip=skip)
+            yield from _iter_api_parallel(config, on_progress, skip=skip,
+                                          done_codes=done_codes, on_code_done=on_code_done)
         else:
-            yield from _iter_api(config, on_progress, skip=skip)
+            yield from _iter_api(config, on_progress, skip=skip,
+                                 done_codes=done_codes, on_code_done=on_code_done)
     elif config.source == "site":
         yield from _iter_site(config, on_progress, skip=skip)
     else:
@@ -139,7 +146,8 @@ def _iter_site(config: PipelineConfig, on_progress, skip: set | None = None) -> 
             closer()
 
 
-def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = None) -> Iterator[Company]:
+def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = None,
+                       done_codes: set | None = None, on_code_done=None) -> Iterator[Company]:
     """Параллельный сбор через API: до config.concurrency карточек одновременно,
     каждый запрос берёт живой ключ из пула; исчерпавший лимит ключ выбывает."""
     import os
@@ -212,14 +220,20 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
 
     try:
         with ThreadPoolExecutor(max_workers=conc) as ex:
+            done = done_codes or set()
             for region in regions:
                 for query in queries:
+                    # Код уже полностью пройден в прошлом прогоне — пропускаем целиком,
+                    # не пролистывая заново (экономим запросы при докачке).
+                    if query in done:
+                        continue
                     # 1) перечисляем ИНН по коду (поиск, через пул, последовательно).
                     #    Стоп, если страница не принесла НИ ОДНОГО нового ИНН
                     #    (checko повторяет записи на «лишних» страницах).
                     inns = []
                     page_all: set[str] = set()
                     page = 1
+                    search_ok = True     # код пройден до конца (не оборван лимитом/ошибкой)
                     while page <= MAX_SEARCH_PAGES:
                         try:
                             stats["search"] += 1
@@ -231,6 +245,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                             return
                         except Exception as exc:  # noqa: BLE001
                             print(f"  [api] {query} стр.{page}: {exc}", file=sys.stderr)
+                            search_ok = False
                             break
                         recs = extract_search_records(payload)
                         if not recs:
@@ -261,6 +276,9 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                             break
                         page += 1
                     if not config.enrich_contacts:
+                        # список по коду собран целиком — отмечаем чекпоинт
+                        if search_ok and on_code_done:
+                            on_code_done(query)
                         continue
                     # 2) параллельно тянем карточки
                     futures = {ex.submit(fetch_card, inn, query): inn for inn in inns}
@@ -285,6 +303,9 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                             on_progress(count)
                         if config.limit and count >= config.limit:
                             return
+                    # карточки по коду разобраны целиком — чекпоинт
+                    if search_ok and on_code_done:
+                        on_code_done(query)
     finally:
         summary()
 
@@ -361,7 +382,8 @@ def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
             break
 
 
-def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> Iterator[Company]:
+def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None,
+              done_codes: set | None = None, on_code_done=None) -> Iterator[Company]:
     import os
     import sys
     from .checko import CheckoLimit
@@ -383,11 +405,15 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
               f"отфильтровано по ОКВЭД: {stats['drop_okved']}, по статусу: {stats['drop_inactive']}, "
               f"ошибок карточек: {stats['errors']}, страниц поиска: {stats['search']}", file=sys.stderr)
 
+    done = done_codes or set()
     try:
         for region in regions:
             for query in queries:
+                if query in done:            # код уже пройден целиком — пропускаем
+                    continue
                 page = 1
                 page_all: set[str] = set()
+                search_ok = True             # код пройден до конца (не оборван)
                 while page <= MAX_SEARCH_PAGES:
                     try:
                         stats["search"] += 1
@@ -399,6 +425,7 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                     except Exception as exc:  # noqa: BLE001 — 403/пагинация вне тарифа по коду
                         print(f"  [api] {query} стр.{page}: {exc}. Беру доступное по этому коду.",
                               file=sys.stderr)
+                        search_ok = False
                         break
                     records = client.extract_search_records(payload)
                     if not records:
@@ -465,6 +492,9 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None) -> I
                     if fresh_page == 0:       # страница без новых ИНН — повтор/конец
                         break
                     page += 1
+                # код разобран целиком — чекпоинт для докачки
+                if search_ok and on_code_done:
+                    on_code_done(query)
     finally:
         summary()
 

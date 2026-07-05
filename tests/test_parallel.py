@@ -57,6 +57,43 @@ def test_parallel_collect(monkeypatch):
     assert got == {"11", "22", "33", "44"}   # все собраны, несмотря на мёртвый k1
 
 
+def test_done_codes_checkpoint(monkeypatch):
+    # Два кода. Первый прогон отмечает пройденные коды; второй — их пропускает.
+    pages = {
+        ("25.62", 1): {"data": {"Записи": [{"ИНН": "11"}, {"ИНН": "22"}]}},
+        ("24.10", 1): {"data": {"Записи": [{"ИНН": "33"}]}},
+    }
+    searched = []
+
+    class FakeSession:
+        def __init__(self): self.headers = {}
+        def get(self, url, params=None, timeout=None):
+            if "search" in url:
+                code, page = params.get("query"), int(params.get("page", 1))
+                searched.append(code)
+                return FakeResp(pages.get((code, page), {"data": {"Записи": []}}))
+            return FakeResp({"data": {"НаимСокр": "x", "ОКВЭД": {"Код": "25.62"},
+                                      "Статус": {"Наим": "Действует"}}})
+
+    monkeypatch.setattr(pipeline, "search_codes", lambda p: ["25.62", "24.10"])
+    import requests as _r
+    monkeypatch.setattr(_r, "Session", lambda: FakeSession())
+
+    cfg = PipelineConfig(source="api", okved_set="none", extra_okved=["25.62", "24.10"],
+                         api_key="k1,k2", delay=0, concurrency=3, enrich_contacts=False)
+
+    done = set()
+    got1 = {c.inn for c in pipeline.iter_run(cfg, done_codes=done,
+                                             on_code_done=done.add)}
+    assert got1 == {"11", "22", "33"}
+    assert done == {"25.62", "24.10"}      # оба кода отмечены пройденными
+
+    searched.clear()
+    got2 = list(pipeline.iter_run(cfg, done_codes=done, on_code_done=done.add))
+    assert got2 == []                       # всё пройдено
+    assert searched == []                   # поиск НЕ вызывался — коды пропущены
+
+
 def test_iter_enrich(monkeypatch):
     from metalparser.pipeline import iter_enrich, PipelineConfig
     companies = {
