@@ -218,8 +218,13 @@ def count_companies(config: PipelineConfig, delay: float | None = None):
     НЕ скачивая сами компании. Возвращает (список (код, кол-во), всего).
 
     Тратит по 1 лёгкому запросу поиска на код (× число регионов)."""
+    import sys
     client = CheckoClient(api_key=config.api_key, prefer_api=True,
                           delay=delay if delay is not None else config.delay)
+    print(f"  ключей в ротации: {len(client.keys)}", file=sys.stderr)
+    if not client.keys:
+        print("  [api] НЕТ КЛЮЧЕЙ — задайте --api-key, env CHECKO_API_KEY или сохраните в вебе.",
+              file=sys.stderr)
     codes = search_codes(_matcher(config).prefixes)
     regions = config.regions or [None]
     per: list[tuple[str, int]] = []
@@ -231,10 +236,11 @@ def count_companies(config: PipelineConfig, delay: float | None = None):
             try:
                 payload = client.search_page(code, region, config.only_active, 1)
                 c += client.extract_search_total(payload)
-            except CheckoLimit:
+            except CheckoLimit as exc:
+                print(f"  [api] остановка на {code}: {exc}", file=sys.stderr)
                 return per, total          # все ключи исчерпаны — отдаём что есть
-            except Exception:  # noqa: BLE001 — код недоступен/ошибка по коду
-                pass
+            except Exception as exc:  # noqa: BLE001 — код недоступен/ошибка по коду
+                print(f"  [api] {code}: {exc}", file=sys.stderr)
         per.append((code, c))
         total += c
     return per, total
