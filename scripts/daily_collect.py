@@ -27,8 +27,11 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from metalparser.pipeline import PipelineConfig, iter_run          # noqa: E402
 from metalparser.export import CsvAppender, read_existing_keys, write_excel_from_csv  # noqa: E402
+from metalparser.checko import read_keys_file                       # noqa: E402
 
-_SECRETS = os.path.join(os.path.dirname(__file__), "..", "data", "secrets.json")
+_DATA = os.path.join(os.path.dirname(__file__), "..", "data")
+_SECRETS = os.path.join(_DATA, "secrets.json")
+_KEYS_FILE = os.path.join(_DATA, "api_keys.txt")
 
 
 def _saved(key):
@@ -124,7 +127,7 @@ def main():
     config = PipelineConfig(
         source=args.source, okved_set="none", extra_okved=codes,
         only_active=not args.all_statuses,
-        api_key=os.environ.get("CHECKO_API_KEY") or _saved("api_key"),
+        api_key=(read_keys_file(_KEYS_FILE) or os.environ.get("CHECKO_API_KEY") or _saved("api_key")),
         cookie=os.environ.get("CHECKO_COOKIE") or _saved("cookie"),
         browser=args.browser,
         user_agent=os.environ.get("CHECKO_UA") or _saved("ua"),

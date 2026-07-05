@@ -80,8 +80,13 @@ def resolve_cookie(form_val: str | None) -> str | None:
     return (form_val or "").strip() or load_saved().get("cookie") or os.environ.get("CHECKO_COOKIE") or None
 
 
+_KEYS_FILE = os.path.join(OUTPUT_DIR, "api_keys.txt")
+
+
 def resolve_api_key(form_val: str | None) -> str | None:
-    return (form_val or "").strip() or load_saved().get("api_key") or os.environ.get("CHECKO_API_KEY") or None
+    from metalparser.checko import read_keys_file
+    return ((form_val or "").strip() or read_keys_file(_KEYS_FILE)
+            or load_saved().get("api_key") or os.environ.get("CHECKO_API_KEY") or None)
 
 
 def parse_okved_codes(form) -> list[str]:

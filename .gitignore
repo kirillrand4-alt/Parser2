@@ -13,6 +13,7 @@ venv/
 # сохранённые секреты (куки/ключ) — НЕ коммитить
 /data/secrets.json
 /data/auto.json
+/data/api_keys.txt
 /data/browser_profile/
 company.html
 catalog_*.html

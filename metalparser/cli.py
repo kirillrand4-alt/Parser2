@@ -9,10 +9,13 @@ import sys
 import time
 
 from .export import write_excel_from_csv, CsvAppender, read_existing_keys
+from .checko import read_keys_file
 from .okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET
 from .pipeline import PipelineConfig, iter_run
 
-_SECRETS_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "secrets.json")
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+_SECRETS_PATH = os.path.join(_DATA_DIR, "secrets.json")
+_KEYS_FILE = os.path.join(_DATA_DIR, "api_keys.txt")
 
 
 def _saved(key: str) -> str | None:
@@ -48,7 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="не фильтровать по статусу (по умолчанию только действующие)")
     p.add_argument("--no-enrich", action="store_true",
                    help="не дообогащать контактами через checko (только данные ЕГРЮЛ)")
-    p.add_argument("--api-key", default=None, help="ключ API checko (или env CHECKO_API_KEY)")
+    p.add_argument("--api-key", default=None, help="ключ(и) API checko через запятую (или env CHECKO_API_KEY)")
+    p.add_argument("--api-keys-file", default=_KEYS_FILE,
+                   help="файл со списком ключей (по ключу в строке). По умолчанию data/api_keys.txt")
     p.add_argument("--html", action="store_true",
                    help="принудительно HTML-режим checko, даже при наличии ключа")
     p.add_argument("--delay", type=float, default=1.5, help="пауза между запросами к checko, сек")
@@ -64,7 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    api_key = args.api_key or os.environ.get("CHECKO_API_KEY") or _saved("api_key")
+    # приоритет ключей: --api-key → файл api_keys.txt → env → сохранённые
+    api_key = (args.api_key or read_keys_file(args.api_keys_file)
+               or os.environ.get("CHECKO_API_KEY") or _saved("api_key"))
     cookie = args.cookie or os.environ.get("CHECKO_COOKIE") or _saved("cookie")
 
     # --okved можно передавать списком через запятую/пробел

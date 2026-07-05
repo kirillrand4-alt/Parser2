@@ -89,6 +89,20 @@ class CheckoLimit(Exception):
     """Исчерпан лимит всех ключей (суточный лимит/недоступно на тарифе)."""
 
 
+def read_keys_file(path: str) -> str:
+    """Читает ключи из txt-файла (по ключу в строке, '#' — комментарий).
+    Возвращает строку ключей через запятую (пусто, если файла нет)."""
+    try:
+        toks = []
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.split("#", 1)[0]
+                toks += re.split(r"[,\s;]+", line)
+        return ",".join(t.strip() for t in toks if t.strip())
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _parse_keys(api_key) -> list[str]:
     """Список ключей из строки (через запятую/пробел/перенос) или списка."""
     if isinstance(api_key, (list, tuple)):
