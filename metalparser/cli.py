@@ -119,28 +119,28 @@ def main(argv: list[str] | None = None) -> int:
 
     start = time.monotonic()
 
-    def on_progress(n):
-        if args.source == "api":
-            print(f"  найдено через API: {n}", file=sys.stderr)
-        elif args.source == "site":
-            print(f"  собрано через сайт: {n}", file=sys.stderr)
-        else:
-            print(f"  просмотрено записей ЕГРЮЛ: {n}", file=sys.stderr)
+    def line(c, i):
+        tel = c.phones[0] if c.phones else "—"
+        mail = c.emails[0] if c.emails else "—"
+        site = c.websites[0] if c.websites else "—"
+        err = f"  ОШИБКА: {c.enrich_error}" if c.enrich_error else ""
+        return (f"[{i}] {c.inn:<12} {(c.name or '')[:45]:<45} | {c.okved_code:<7} | "
+                f"тел: {tel}  почта: {mail}  сайт: {site}{err}")
 
     # Докачка: пропускаем уже собранные (по существующему CSV) для api/site
     skip = read_existing_keys(args.csv) if args.source in ("site", "api") else set()
+    base = len(skip)
     if skip:
-        print(f"Докачка: в {args.csv} уже {len(skip)} компаний — пропускаю их.", file=sys.stderr)
+        print(f"Докачка: в {args.csv} уже {base} компаний — пропускаю их.", file=sys.stderr)
 
     # Потоковая запись: каждая компания сразу в CSV (не теряется при остановке)
     appender = CsvAppender(args.csv)
     companies = []
     try:
-        for c in iter_run(config, on_progress=on_progress, skip=skip):
+        for c in iter_run(config, skip=skip):
             appender.write(c)
             companies.append(c)
-            if len(companies) % 25 == 0:
-                print(f"  записано: {len(companies)}", file=sys.stderr)
+            print(line(c, base + len(companies)), file=sys.stderr, flush=True)
     except KeyboardInterrupt:
         print("\nОстановлено вручную — собранное сохранено в CSV.", file=sys.stderr)
     finally:

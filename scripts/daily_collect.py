@@ -56,18 +56,32 @@ def load_codes(args) -> list[str]:
     return out
 
 
+def _fmt(c, n, total_before):
+    """Строка лога по одной компании: номер, ИНН, название, ОКВЭД, контакты."""
+    tel = c.phones[0] if c.phones else "—"
+    mail = c.emails[0] if c.emails else "—"
+    site = c.websites[0] if c.websites else "—"
+    extra = ""
+    if len(c.phones) > 1 or len(c.emails) > 1 or len(c.websites) > 1:
+        extra = f" (+{max(0,len(c.phones)-1)}тел/+{max(0,len(c.emails)-1)}почт/+{max(0,len(c.websites)-1)}сайт)"
+    err = f"  ОШИБКА: {c.enrich_error}" if c.enrich_error else ""
+    name = (c.name or "")[:45]
+    return (f"[{total_before + n}] {c.inn:<12} {name:<45} | {c.okved_code:<7} | "
+            f"тел: {tel}  почта: {mail}  сайт: {site}{extra}{err}")
+
+
 def run_once(config: PipelineConfig, csv_path: str, xlsx_path: str | None) -> int:
     skip = read_existing_keys(csv_path)
+    total_before = len(skip)
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    print(f"[{stamp}] старт. В базе уже {len(skip)} — пропускаю их, добираю новых.")
+    print(f"[{stamp}] старт. В базе уже {total_before} — пропускаю их, добираю новых.", flush=True)
     app = CsvAppender(csv_path)
     n = 0
     try:
         for c in iter_run(config, skip=skip):
             app.write(c)
             n += 1
-            if n % 25 == 0:
-                print(f"  +{n} новых…")
+            print(_fmt(c, n, total_before), flush=True)
     except KeyboardInterrupt:
         print("Остановлено вручную — собранное сохранено.")
     finally:
