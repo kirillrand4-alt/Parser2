@@ -28,10 +28,33 @@ DEFAULT_BROWSERS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "data", "pw-browsers"))
 
 
+def _proxy_dict(proxy: str | None):
+    """Строка прокси → dict для Playwright launch(proxy=...). ВНИМАНИЕ: Chromium
+    НЕ поддерживает авторизацию для socks5 — тогда логин/пароль игнорируются."""
+    if not proxy:
+        return None
+    import re as _re
+    m = _re.match(r"^(?P<scheme>\w+)://(?:(?P<user>[^:@/]+):(?P<pw>[^@/]+)@)?(?P<host>[^/]+)$",
+                  proxy.strip())
+    if not m:
+        return {"server": proxy.strip()}
+    scheme = m.group("scheme").lower()
+    # Chromium НЕ умеет socks5 с авторизацией — такой прокси к браузеру не
+    # применяем (иначе все запросы упадут). Вернём спец-значение.
+    if scheme.startswith("socks") and m.group("user"):
+        return "UNSUPPORTED_SOCKS_AUTH"
+    d = {"server": f"{scheme}://{m.group('host')}"}
+    if m.group("user"):
+        d["username"] = m.group("user")
+        d["password"] = m.group("pw")
+    return d
+
+
 class BrowserSiteClient:
     def __init__(self, cookie: str | None = None, user_data_dir: str | None = None,
                  headless: bool | None = None, delay: float = 1.5, timeout: float = 45000,
-                 executable_path: str | None = None, persistent: bool | None = None):
+                 executable_path: str | None = None, persistent: bool | None = None,
+                 proxy: str | None = None, max_delay: float = 30.0):
         self.cookie = cookie or os.environ.get("CHECKO_COOKIE") or None
         self.user_data_dir = user_data_dir or os.environ.get("CHECKO_PROFILE") or DEFAULT_PROFILE
         env_headless = os.environ.get("CHECKO_HEADLESS")
@@ -40,7 +63,9 @@ class BrowserSiteClient:
         # persistent=False — эфемерный браузер (для дообогащения по кукам): не
         # зависит от возможно повреждённого профиля.
         self.persistent = persistent if persistent is not None else (self.cookie is None)
+        self.proxy = proxy or os.environ.get("CHECKO_PROXY") or None
         self.delay = delay
+        self.max_delay = max_delay
         self.timeout = timeout
         self.executable_path = executable_path or os.environ.get("PLAYWRIGHT_CHROME") or None
         self._last = 0.0
@@ -59,6 +84,15 @@ class BrowserSiteClient:
         launch = {"headless": self.headless, "args": args}
         if self.executable_path:
             launch["executable_path"] = self.executable_path
+        pd = _proxy_dict(self.proxy)
+        if pd == "UNSUPPORTED_SOCKS_AUTH":
+            import sys
+            print("  [site] ВНИМАНИЕ: браузер НЕ умеет socks5 с логином/паролем — "
+                  "прокси к браузеру не применён (запросы идут с IP сервера). "
+                  "Для прокси используй HTTP-режим (сними галочку «браузер»).",
+                  file=sys.stderr, flush=True)
+        elif pd:
+            launch["proxy"] = pd
         if self.persistent:
             os.makedirs(self.user_data_dir, exist_ok=True)
             self.ctx = self._pw.chromium.launch_persistent_context(
@@ -92,9 +126,23 @@ class BrowserSiteClient:
             time.sleep(self.delay - el)
 
     def _content(self, url: str) -> str:
-        self._throttle()
-        self.page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
-        self._last = time.monotonic()
+        import sys
+        backoff = 4.0
+        for attempt in range(5):
+            self._throttle()
+            resp = self.page.goto(url, timeout=self.timeout, wait_until="domcontentloaded")
+            self._last = time.monotonic()
+            status = resp.status if resp is not None else 200
+            if status == 429:
+                # адаптивно замедляемся и ждём, как в HTTP-клиенте
+                self.delay = min(self.delay * 1.5, self.max_delay)
+                print(f"  [site] 429 (лимит сайта), пауза {backoff:.0f} c; новый интервал "
+                      f"{self.delay:.1f} c (попытка {attempt + 1}/5)", file=sys.stderr, flush=True)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60.0)
+                continue
+            return self.page.content()
+        # не смогли пробиться сквозь 429 — вернём последнее содержимое (парсер даст пусто)
         return self.page.content()
 
     def catalog_ogrns(self, dotted_code: str, page: int) -> list[str]:

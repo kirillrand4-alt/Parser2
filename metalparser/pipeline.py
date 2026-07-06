@@ -453,7 +453,9 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
             # persistent=False — не трогаем профиль на диске (он мог повредиться),
             # авторизация через куки; для дообогащения профиль не нужен.
             client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0,
-                                       persistent=False)
+                                       persistent=False, proxy=config.proxy)
+            if config.proxy:
+                print(f"  [site] браузер через прокси: {config.proxy}", file=sys.stderr, flush=True)
         except Exception as exc:  # noqa: BLE001
             from .browser import DEFAULT_BROWSERS_DIR
             print(f"  [site] НЕ удалось запустить браузер: {type(exc).__name__}: {exc}",
