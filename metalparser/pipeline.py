@@ -175,8 +175,9 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
     if _proxies(config.proxy):
         session.proxies.update(_proxies(config.proxy))
-        print(f"  [api] через прокси: {config.proxy}", file=sys.stderr)
-    print(f"  [api] параллельно: {conc} одновременных запросов, ключей: {pool.total()}", file=sys.stderr)
+        print(f"  [api] через прокси: {config.proxy}", file=sys.stderr, flush=True)
+    print(f"  [api] параллельно: {conc} одновременных запросов, ключей: {pool.total()}",
+          file=sys.stderr, flush=True)
 
     queries = search_codes(matcher.prefixes)
     regions = config.regions or [None]
@@ -184,6 +185,9 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     # Быстрая параллельная проверка ключей — отсеять мёртвые/невалидные заранее,
     # чтобы в процессе не было пауз на переборе (живой ключ тратит 1 лёгкий запрос).
     if pool.total() > 5 and queries:
+        print(f"  [api] проверяю {pool.total()} ключ(ей) "
+              f"{'через прокси ' if config.proxy else ''}(до 15с на ключ)…",
+              file=sys.stderr, flush=True)
         _pp = build_search_params(queries[0], regions[0], config.only_active, 1)
         _reasons = {}          # ключ (обрезанный) → почему выбыл
         _rlock = __import__("threading").Lock()
@@ -212,16 +216,17 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
 
         with ThreadPoolExecutor(max_workers=min(10, pool.total())) as _pex:
             list(_pex.map(_probe, pool.keys_snapshot()))
-        print(f"  [api] живых ключей: {pool.alive()} из {pool.total()}", file=sys.stderr)
+        print(f"  [api] живых ключей: {pool.alive()} из {pool.total()}", file=sys.stderr, flush=True)
         if _reasons:
             # сводка причин выбывания: одинаковые сообщения группируем
             by_msg = {}
             for msg in _reasons.values():
                 by_msg[msg] = by_msg.get(msg, 0) + 1
             for msg, cnt in sorted(by_msg.items(), key=lambda x: -x[1]):
-                print(f"    ↳ {cnt} ключ(ей) выбыло: {msg}", file=sys.stderr)
+                print(f"    ↳ {cnt} ключ(ей) выбыло: {msg}", file=sys.stderr, flush=True)
         if pool.alive() == 0:
-            print("  [api] нет живых ключей (исчерпаны/невалидны). Завтра докачает.", file=sys.stderr)
+            print("  [api] нет живых ключей (исчерпаны/невалидны). Завтра докачает.",
+                  file=sys.stderr, flush=True)
             return
     skip = skip or set()
     seen: set[str] = set()
@@ -258,7 +263,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
             extract_total = CheckoClient.extract_search_total
             todo = [q for q in queries if q not in done]
             print(f"  [api] кодов к обработке: {len(todo)} "
-                  f"(пропущено пройденных: {len(queries) - len(todo)})", file=sys.stderr)
+                  f"(пропущено пройденных: {len(queries) - len(todo)})", file=sys.stderr, flush=True)
             for region in regions:
                 for qi, query in enumerate(queries, 1):
                     # Код уже полностью пройден в прошлом прогоне — пропускаем целиком,
@@ -275,7 +280,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                     total = None
                     page = 1
                     search_ok = True     # код пройден до конца (не оборван лимитом/ошибкой)
-                    print(f"  [api] [{qi}/{len(queries)}] код {query}: листаю…", file=sys.stderr)
+                    print(f"  [api] [{qi}/{len(queries)}] код {query}: листаю…", file=sys.stderr, flush=True)
                     while page <= MAX_SEARCH_PAGES:
                         try:
                             stats["search"] += 1
@@ -284,7 +289,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                         except CheckoLimit:
                             print(f"  [api] лимит всех ключей исчерпан на поиске "
                                   f"(код {query}, стр.{page}, собрано {count}). Завтра докачает.",
-                                  file=sys.stderr)
+                                  file=sys.stderr, flush=True)
                             return
                         except Exception as exc:  # noqa: BLE001
                             print(f"  [api] {query} стр.{page}: {exc}", file=sys.stderr)
@@ -326,7 +331,8 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                         if page % 25 == 0:       # heartbeat на длинных кодах
                             tot = f"/~{total}" if total else ""
                             print(f"  [api]   {query}: стр.{page}, увидено {len(page_all)}{tot}, "
-                                  f"новых {new_for_code}, живых ключей {pool.alive()}", file=sys.stderr)
+                                  f"новых {new_for_code}, живых ключей {pool.alive()}",
+                                  file=sys.stderr, flush=True)
                         page += 1
                     if not config.enrich_contacts:
                         # список по коду собран целиком — отмечаем чекпоинт
@@ -334,7 +340,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                             on_code_done(query)
                         print(f"  [api] [{qi}/{len(queries)}] код {query}: готов "
                               f"(+{new_for_code} новых, увидено {len(page_all)}"
-                              f"{'/' + str(total) if total else ''})", file=sys.stderr)
+                              f"{'/' + str(total) if total else ''})", file=sys.stderr, flush=True)
                         continue
                     # 2) параллельно тянем карточки
                     futures = {ex.submit(fetch_card, inn, query): inn for inn in inns}
