@@ -364,18 +364,20 @@ def _worker(job_id: str, config: PipelineConfig):
         _TEE.unregister()
 
 
-def _read_inns_from_csv(path: str) -> list[str]:
-    """ИНН из CSV-базы (столбец «ИНН»), с сохранением порядка и без дублей."""
+def _read_inns_from_csv(path: str) -> list[tuple[str, str]]:
+    """Пары (ИНН, ОГРН) из CSV-базы. ОГРН может быть пустым — тогда сайт
+    найдёт его поиском по ИНН. Порядок сохраняется, дубли по ИНН убираются."""
     import csv as _csv
     out, seen = [], set()
     if not os.path.exists(path):
         return out
     with open(path, encoding="utf-8-sig", newline="") as fh:
         for row in _csv.DictReader(fh, delimiter=";"):
-            v = (row.get("ИНН") or row.get("inn") or "").strip()
-            if v and v not in seen:
-                seen.add(v)
-                out.append(v)
+            inn = (row.get("ИНН") or row.get("inn") or "").strip()
+            ogrn = (row.get("ОГРН") or row.get("ogrn") or "").strip()
+            if inn and inn not in seen:
+                seen.add(inn)
+                out.append((inn, ogrn))
     return out
 
 

@@ -90,16 +90,33 @@ class BrowserSiteClient:
         html = self._content(CARD_URL.format(ident=ogrn))
         return parse_card(html, ogrn=ogrn, okved_code=okved_code)
 
-    def card_by_inn(self, inn: str, okved_code: str = "") -> Company:
-        """Карточка по ИНН: /company/<ИНН> (checko сам редиректит на карточку)."""
+    def resolve_ogrn(self, inn: str) -> str:
+        """ИНН → ОГРН через строку поиска сайта (браузер исполняет JS SPA)."""
         import re as _re
-        html = self._content(CARD_URL.format(ident=inn))
-        c = parse_card(html, okved_code=okved_code)
+        from .site import search_templates, _OGRN_LINK_RE, _OGRN_IN_URL_RE
+        for tmpl in search_templates():
+            try:
+                html = self._content(tmpl.format(q=inn))
+            except Exception:  # noqa: BLE001
+                continue
+            m = _OGRN_IN_URL_RE.search(self.page.url or "")   # редирект на карточку
+            if m:
+                return m.group(1)
+            m = _OGRN_LINK_RE.search(html)                    # первая ссылка результата
+            if m:
+                return m.group(1)
+        return ""
+
+    def card_by_inn(self, inn: str, okved_code: str = "", ogrn: str = "") -> Company:
+        """Карточка по ИНН: находим ОГРН через поиск, затем открываем /company/<ОГРН>."""
+        ogrn = (ogrn or "").strip() or self.resolve_ogrn(inn)
+        if not ogrn:
+            return Company(inn=inn, okved_code=okved_code, enrich_source="site",
+                           enrich_error="ОГРН не найден по ИНН (поиск не дал результата)")
+        html = self._content(CARD_URL.format(ident=ogrn))
+        c = parse_card(html, ogrn=ogrn, okved_code=okved_code)
         if not c.inn:
             c.inn = inn
-        m = _re.search(r"-(\d{13})(?:[/?#]|$)", self.page.url or "")
-        if m and not c.ogrn:
-            c.ogrn = m.group(1)
         if not c.name:
             c.enrich_error = "карточка не найдена/страница без данных"
         return c

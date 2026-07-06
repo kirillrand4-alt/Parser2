@@ -459,13 +459,16 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
             print(f"  [site] через прокси: {config.proxy}", file=sys.stderr, flush=True)
     skip = skip or set()
     todo, _seen = [], set()
-    for i in inns:
-        i = str(i).strip()
-        if i and i not in skip and i not in _seen:
-            _seen.add(i)
-            todo.append(i)
+    for it in inns:
+        inn, ogrn = (it if isinstance(it, (tuple, list)) else (it, ""))
+        inn = str(inn or "").strip()
+        ogrn = str(ogrn or "").strip()
+        if inn and inn not in skip and inn not in _seen:
+            _seen.add(inn)
+            todo.append((inn, ogrn))
     print(f"  [site] дообогащение через сайт: {len(todo)} ИНН"
-          f"{' (с куки)' if config.cookie else ' (без куки — контакты могут быть скрыты)'}",
+          f"{' (с куки)' if config.cookie else ' (без куки — контакты могут быть скрыты)'}"
+          f"{' [браузер]' if config.browser else ''}. Поиск ОГРН по ИНН → карточка.",
           file=sys.stderr, flush=True)
 
     count = 0
@@ -473,9 +476,9 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
     fails = 0                      # ошибок подряд (блок/429)
     MAX_FAILS = 15
     try:
-        for inn in todo:
+        for inn, ogrn in todo:
             try:
-                c = client.card_by_inn(inn)
+                c = client.card_by_inn(inn, ogrn=ogrn)
                 if c.enrich_error:              # 200, но страница без данных (капча/заглушка)
                     raise RuntimeError(c.enrich_error)
                 fails = 0

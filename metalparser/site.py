@@ -23,8 +23,26 @@ from .okved import OKVED_NAMES
 
 CATALOG_URL = "https://checko.ru/company/select"
 CARD_URL = "https://checko.ru/company/{ident}"
+# Поиск по ИНН → страница компании (checko редиректит на /company/<slug>-<ОГРН>).
+# Точный адрес поиска можно переопределить через env CHECKO_SEARCH_URL
+# (шаблон с {q}), если у checko он отличается.
+_DEFAULT_SEARCH_URLS = ("https://checko.ru/search?query={q}",
+                        "https://checko.ru/company/search?query={q}")
+
+
+def search_templates() -> tuple[str, ...]:
+    env = os.environ.get("CHECKO_SEARCH_URL")
+    if env:
+        if "{q}" not in env:
+            env = env.rstrip("&?") + ("&" if "?" in env else "?") + "query={q}"
+        return (env,) + _DEFAULT_SEARCH_URLS
+    return _DEFAULT_SEARCH_URLS
+
+
+SEARCH_URLS = _DEFAULT_SEARCH_URLS   # обратная совместимость
 
 _OGRN_LINK_RE = re.compile(r'href="(?:https?://checko\.ru)?/company/[^"]*?-(\d{13})"')
+_OGRN_IN_URL_RE = re.compile(r"-(\d{13})(?:[/?#]|$)")
 _INN_TITLE_RE = re.compile(r"ИНН\s*(\d{10}|\d{12})")
 _INACTIVE_RE = re.compile(r"ликвидир|прекратил|в стадии ликвид|недейств|исключен", re.I)
 _ACTIVE_RE = re.compile(r"действующ", re.I)
@@ -121,18 +139,36 @@ class CheckoSiteClient:
         r.raise_for_status()
         return parse_card(r.text, ogrn=ogrn, okved_code=okved_code)
 
-    def card_by_inn(self, inn: str, okved_code: str = "") -> Company:
-        """Карточка по ИНН: checko отдаёт страницу /company/<ИНН> (с редиректом
-        на канонический адрес). Разбираем контакты из HTML."""
-        r = self._get(CARD_URL.format(ident=inn))
+    def resolve_ogrn(self, inn: str) -> str:
+        """ИНН → ОГРН через поиск на сайте (страница /company/<ИНН> даёт 404).
+        Возвращает 13-значный ОГРН или '' если не нашли."""
+        for tmpl in search_templates():
+            try:
+                r = self._get(tmpl.format(q=inn))
+            except Exception:  # noqa: BLE001
+                continue
+            # checko часто редиректит прямо на карточку → ОГРН в финальном URL
+            m = _OGRN_IN_URL_RE.search(getattr(r, "url", "") or "")
+            if m:
+                return m.group(1)
+            if r.status_code == 200:
+                m = _OGRN_LINK_RE.search(r.text)   # первая ссылка на компанию
+                if m:
+                    return m.group(1)
+        return ""
+
+    def card_by_inn(self, inn: str, okved_code: str = "", ogrn: str = "") -> Company:
+        """Карточка по ИНН. Сначала находим ОГРН (по ИНН прямой URL даёт 404),
+        затем открываем /company/<ОГРН>. Если ОГРН уже известен — сразу по нему."""
+        ogrn = (ogrn or "").strip() or self.resolve_ogrn(inn)
+        if not ogrn:
+            return Company(inn=inn, okved_code=okved_code, enrich_source="site",
+                           enrich_error="ОГРН не найден по ИНН (поиск не дал результата)")
+        r = self._get(CARD_URL.format(ident=ogrn))
         r.raise_for_status()
-        c = parse_card(r.text, okved_code=okved_code)
+        c = parse_card(r.text, ogrn=ogrn, okved_code=okved_code)
         if not c.inn:
             c.inn = inn
-        # ОГРН из финального URL (…-<13 цифр>), если удалось
-        m = re.search(r"-(\d{13})(?:[/?#]|$)", getattr(r, "url", "") or "")
-        if m and not c.ogrn:
-            c.ogrn = m.group(1)
         if not c.name:
             c.enrich_error = "карточка не найдена/страница без данных"
         return c

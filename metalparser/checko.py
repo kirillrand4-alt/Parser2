@@ -46,6 +46,7 @@ SEARCH_ACTIVE_VALUE = "true"       # значение для active при only_
 SEARCH_LIST_KEYS = ("Записи", "data", "records", "items", "Результаты")
 # где в записи лежит ИНН / наименование / основной ОКВЭД:
 SEARCH_INN_KEYS = ("ИНН", "inn")
+SEARCH_OGRN_KEYS = ("ОГРН", "ogrn", "ОГРНИП")
 SEARCH_NAME_KEYS = ("НаимСокр", "НаимПолн", "name", "Наим")
 SEARCH_OKVED_KEYS = ("ОКВЭД", "okved", "КодОКВЭД")
 
@@ -514,8 +515,10 @@ def company_from_search_record(rec: dict) -> Company:
         else:
             okved_code, okved_name = "", s
     inn = str(_first(rec, SEARCH_INN_KEYS) or "") or _deep_find_inn(rec)
+    ogrn = str(_first(rec, SEARCH_OGRN_KEYS) or "")
     return Company(
         inn=inn,
+        ogrn=ogrn,
         name=str(_first(rec, SEARCH_NAME_KEYS) or ""),
         okved_code=okved_code,
         okved_name=okved_name,
