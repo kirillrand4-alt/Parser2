@@ -384,12 +384,17 @@ def _read_inns_from_csv(path: str) -> list[tuple[str, str]]:
 def _enrich_site_worker(job_id: str, config: PipelineConfig, input_csv: str, output_csv: str):
     """Фоновое дообогащение по ИНН ЧЕРЕЗ САЙТ (HTML). Докачиваемо: пропускает
     уже обогащённые в output_csv."""
+    import sys as _sys
     job = JOBS[job_id]
     job.setdefault("log", [])
     _TEE.register(job["log"])
+    print(f"  [site] старт дообогащения. Читаю базу {os.path.basename(input_csv)}…",
+          file=_sys.stderr, flush=True)
     xlsx_path = os.path.splitext(output_csv)[0] + ".xlsx"
     inns = _read_inns_from_csv(input_csv)
     skip = read_existing_keys(output_csv)
+    print(f"  [site] в базе {len(inns)} ИНН, уже обогащено {len(skip)} — их пропущу.",
+          file=_sys.stderr, flush=True)
     with _LOCK:
         job["total"] = len(inns)
         job["skip"] = len(skip)

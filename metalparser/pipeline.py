@@ -446,10 +446,19 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
     прогоне они повторятся автоматически."""
     import sys
     if config.browser:
-        from .browser import BrowserSiteClient
-        client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0)
-        print("  [site] режим браузера (Playwright): профиль/куки из настроек",
-              file=sys.stderr, flush=True)
+        print("  [site] запускаю браузер (Playwright/Chromium)… это может занять "
+              "10–30 сек при первом старте.", file=sys.stderr, flush=True)
+        try:
+            from .browser import BrowserSiteClient
+            client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [site] НЕ удалось запустить браузер: {type(exc).__name__}: {exc}",
+                  file=sys.stderr, flush=True)
+            print("  [site] установи один раз:  .venv\\Scripts\\pip install playwright  и  "
+                  ".venv\\Scripts\\playwright install chromium  — или сними галочку «браузер» "
+                  "(тогда обычные HTTP-запросы).", file=sys.stderr, flush=True)
+            return
+        print("  [site] браузер запущен: профиль/куки из настроек", file=sys.stderr, flush=True)
     else:
         from .site import CheckoSiteClient
         client = CheckoSiteClient(cookie=config.cookie, delay=config.delay or 2.0,
