@@ -438,15 +438,25 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
 
     Ходит по страницам /company/<ИНН>, тянет контакты из HTML. Последовательно
     и с задержкой (сайт чувствителен к частоте). skip — уже обогащённые ИНН.
-    Для открытых контактов нужны куки авторизованного аккаунта (config.cookie)."""
-    import sys
-    from .site import CheckoSiteClient
+    Для открытых контактов нужны куки авторизованного аккаунта (config.cookie).
+    config.browser=True — через настоящий браузер (Playwright, профиль/куки):
+    надёжнее против анти-бот защиты.
 
-    client = CheckoSiteClient(cookie=config.cookie, delay=config.delay or 2.0,
-                              user_agent=config.user_agent)
-    if _proxies(config.proxy):
-        client.session.proxies.update(_proxies(config.proxy))
-        print(f"  [site] через прокси: {config.proxy}", file=sys.stderr, flush=True)
+    Ошибочные ИНН НЕ отдаются (не попадают в выходной CSV) — при следующем
+    прогоне они повторятся автоматически."""
+    import sys
+    if config.browser:
+        from .browser import BrowserSiteClient
+        client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0)
+        print("  [site] режим браузера (Playwright): профиль/куки из настроек",
+              file=sys.stderr, flush=True)
+    else:
+        from .site import CheckoSiteClient
+        client = CheckoSiteClient(cookie=config.cookie, delay=config.delay or 2.0,
+                                  user_agent=config.user_agent)
+        if _proxies(config.proxy):
+            client.session.proxies.update(_proxies(config.proxy))
+            print(f"  [site] через прокси: {config.proxy}", file=sys.stderr, flush=True)
     skip = skip or set()
     todo, _seen = [], set()
     for i in inns:
@@ -466,18 +476,25 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
         for inn in todo:
             try:
                 c = client.card_by_inn(inn)
-                fails = 0 if not c.enrich_error else fails
+                if c.enrich_error:              # 200, но страница без данных (капча/заглушка)
+                    raise RuntimeError(c.enrich_error)
+                fails = 0
             except Exception as exc:  # noqa: BLE001
                 fails += 1
-                c = Company(inn=inn, enrich_source="site",
-                            enrich_error=f"{type(exc).__name__}: {exc}")
                 errors += 1
+                # первые ошибки показываем подробно, дальше — каждую 25-ю
+                if errors <= 10 or errors % 25 == 0:
+                    print(f"  [site] {inn}: ОШИБКА {type(exc).__name__}: {exc}",
+                          file=sys.stderr, flush=True)
                 if fails >= MAX_FAILS:
                     print(f"  [site] {fails} ошибок подряд — сайт блокирует запросы, "
-                          f"останавливаюсь (обогащено {count}). Позже продолжит с этого места.",
-                          file=sys.stderr, flush=True)
-                    yield c
+                          f"останавливаюсь (обогащено {count}). Ошибочные ИНН в базу не "
+                          f"записаны — при следующем запуске повторятся.", file=sys.stderr, flush=True)
+                    print("  [site] что попробовать: 1) увеличить задержку (4–5 с); "
+                          "2) куки + UA из ОДНОГО браузера; 3) режим браузера (галочка); "
+                          "4) сменить IP/прокси.", file=sys.stderr, flush=True)
                     return
+                continue
             if config.only_active and c.status and not _is_active_status(c.status):
                 continue
             yield c
@@ -487,7 +504,11 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
             if config.limit and count >= config.limit:
                 return
     finally:
-        print(f"  [site] обогащено через сайт: {count}, ошибок: {errors}", file=sys.stderr, flush=True)
+        closer = getattr(client, "close", None)
+        if callable(closer):
+            closer()
+        print(f"  [site] обогащено через сайт: {count}, ошибок: {errors}",
+              file=sys.stderr, flush=True)
 
 
 def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:

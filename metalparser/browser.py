@@ -90,6 +90,20 @@ class BrowserSiteClient:
         html = self._content(CARD_URL.format(ident=ogrn))
         return parse_card(html, ogrn=ogrn, okved_code=okved_code)
 
+    def card_by_inn(self, inn: str, okved_code: str = "") -> Company:
+        """Карточка по ИНН: /company/<ИНН> (checko сам редиректит на карточку)."""
+        import re as _re
+        html = self._content(CARD_URL.format(ident=inn))
+        c = parse_card(html, okved_code=okved_code)
+        if not c.inn:
+            c.inn = inn
+        m = _re.search(r"-(\d{13})(?:[/?#]|$)", self.page.url or "")
+        if m and not c.ogrn:
+            c.ogrn = m.group(1)
+        if not c.name:
+            c.enrich_error = "карточка не найдена/страница без данных"
+        return c
+
     def close(self):
         try:
             self.ctx.close()

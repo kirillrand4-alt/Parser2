@@ -446,8 +446,9 @@ def enrich_site():
     config = PipelineConfig(
         source="site", cookie=cookie,
         only_active=f.get("only_active", "on") == "on",
+        browser=(f.get("site_browser") == "on"),
         user_agent=load_saved().get("ua") or os.environ.get("CHECKO_UA"),
-        delay=float(f.get("delay", "2.0") or 2.0),
+        delay=float(f.get("site_delay", "2.0") or 2.0),
         limit=int(f.get("limit", "0") or 0),
         proxy=(f.get("proxy") or "").strip() or load_saved().get("proxy") or os.environ.get("CHECKO_PROXY"),
     )

@@ -235,10 +235,14 @@
           </div>
           <div style="width:130px;">
             <label>Задержка, сек</label>
-            <input type="number" name="delay" value="2" step="0.5" min="0.5">
+            <input type="number" name="site_delay" value="2" step="0.5" min="0.5">
           </div>
           <button type="button" id="enrichsitebtn">Дообогатить через сайт</button>
         </div>
+        <label class="chk" style="display:block; margin-top:10px;">
+          <input type="checkbox" name="site_browser" id="site_browser">
+          через настоящий браузер (Playwright) — надёжнее против блокировок, но медленнее
+        </label>
         <div id="enrichsitestatus" class="muted" style="margin-top:10px;"></div>
       </div>
     </form>
