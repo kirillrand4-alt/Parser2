@@ -93,7 +93,7 @@ class CheckoSiteClient:
             "Sec-Fetch-Mode": "navigate",
             "Sec-Fetch-Site": "same-origin",
             "Sec-Fetch-User": "?1",
-            "Sec-Ch-Ua": '"Chromium";v="120", "Google Chrome";v="120", "Not?A_Brand";v="99"',
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
             "Referer": "https://checko.ru/",
@@ -108,14 +108,17 @@ class CheckoSiteClient:
         if el < self.delay:
             time.sleep(self.delay - el)
 
-    def _get(self, url, params=None) -> requests.Response:
+    def _get(self, url, params=None, referer: str | None = None) -> requests.Response:
         import sys
         backoff = 3.0
         last_exc = None
+        # Реферер как в реальной навигации (поиск → карточка). Один консистентный
+        # UA + куки сессии сохраняются самим requests.Session.
+        headers = {"Referer": referer} if referer else None
         for attempt in range(self.max_retries):
             self._throttle()
             try:
-                r = self.session.get(url, params=params, timeout=self.timeout)
+                r = self.session.get(url, params=params, timeout=self.timeout, headers=headers)
                 self._last = time.monotonic()
                 if r.status_code == 429:
                     # адаптивно замедляемся, чтобы выйти на устойчивый темп
@@ -175,7 +178,9 @@ class CheckoSiteClient:
         if not ogrn:
             return Company(inn=inn, okved_code=okved_code, enrich_source="site",
                            enrich_error="ОГРН не найден по ИНН (поиск не дал результата)")
-        r = self._get(CARD_URL.format(ident=ogrn))
+        # реферер = страница поиска (как будто перешли из результатов поиска)
+        ref = "https://checko.ru/search?query=" + inn
+        r = self._get(CARD_URL.format(ident=ogrn), referer=ref)
         r.raise_for_status()
         c = parse_card(r.text, ogrn=ogrn, okved_code=okved_code)
         if not c.inn:
