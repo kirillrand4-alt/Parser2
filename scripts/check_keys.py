@@ -38,11 +38,13 @@ def check_one(session, key: str) -> tuple[str, str, str]:
         pl = r.json()
     except Exception:  # noqa: BLE001
         pl = {}
-    if r.status_code in (401, 403):
-        return tail, "invalid", f"HTTP {r.status_code} (невалиден/нет доступа)"
+    # ВАЖНО: сначала проверяем текст (лимит/тариф) — checko на исчерпанной
+    # квоте отдаёт HTTP 403, но это НЕ битый ключ, а исчерпанный.
     if _is_limit_meta(pl):
         msg = ((pl.get("meta") or {}) if isinstance(pl, dict) else {}).get("message") or "лимит/тариф"
         return tail, "limit", msg
+    if r.status_code in (401, 403):
+        return tail, "invalid", f"HTTP {r.status_code} (невалиден/нет доступа)"
     meta = pl.get("meta") if isinstance(pl, dict) else None
     if isinstance(meta, dict) and str(meta.get("status")).lower() == "error":
         return tail, "invalid", str(meta.get("message") or "ошибка")

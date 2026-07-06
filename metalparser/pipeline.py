@@ -184,11 +184,13 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                     pl = r.json()
                 except Exception:  # noqa: BLE001
                     pl = {}
-                if r.status_code in (401, 403):
-                    reason = f"HTTP {r.status_code} (ключ невалиден/нет доступа)"
-                elif _is_limit_meta(pl):
+                # сначала лимит/тариф: checko на исчерпанной квоте отдаёт 403,
+                # но это исчерпанный ключ, а не невалидный.
+                if _is_limit_meta(pl):
                     meta = pl.get("meta") if isinstance(pl, dict) else None
                     reason = (meta or {}).get("message") or "лимит/тариф"
+                elif r.status_code in (401, 403):
+                    reason = f"HTTP {r.status_code} (ключ невалиден/нет доступа)"
             except Exception as exc:  # noqa: BLE001
                 reason = f"сеть: {type(exc).__name__}"      # не считаем мёртвым по сети
             if reason and "сеть:" not in reason:
