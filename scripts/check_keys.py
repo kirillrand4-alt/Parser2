@@ -26,7 +26,10 @@ _DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 _KEYS_FILE = os.path.join(_DATA, "api_keys.txt")
 
 
-def check_one(session, key: str) -> tuple[str, str, str]:
+_LIMIT_WORDS = ("лимит", "превыш", "тариф", "суточн", "limit", "exceed", "quota")
+
+
+def check_one(session, key: str, debug: bool = False) -> tuple[str, str, str]:
     """→ (last4, категория, сообщение). Категория: alive / limit / invalid / net."""
     tail = f"…{key[-4:]}"
     params = {**build_search_params("25.62", None, True, 1), "key": key}
@@ -34,15 +37,23 @@ def check_one(session, key: str) -> tuple[str, str, str]:
         r = session.get(SEARCH_URL, params=params, timeout=20)
     except Exception as exc:  # noqa: BLE001
         return tail, "net", f"сеть: {type(exc).__name__}"
+    raw = r.text or ""
     try:
         pl = r.json()
     except Exception:  # noqa: BLE001
         pl = {}
-    # ВАЖНО: сначала проверяем текст (лимит/тариф) — checko на исчерпанной
-    # квоте отдаёт HTTP 403, но это НЕ битый ключ, а исчерпанный.
-    if _is_limit_meta(pl):
-        msg = ((pl.get("meta") or {}) if isinstance(pl, dict) else {}).get("message") or "лимит/тариф"
-        return tail, "limit", msg
+    if debug:
+        print(f"  [debug] {tail}: HTTP {r.status_code} | тело: {raw[:200]}", file=sys.stderr)
+    # ВАЖНО: сначала распознаём ЛИМИТ, и максимально широко — checko на
+    # исчерпанной квоте отдаёт HTTP 403, а структура meta бывает разной.
+    # Поэтому ищем ключевые слова про лимит по всему телу ответа.
+    low = raw.lower()
+    if _is_limit_meta(pl) or any(w in low for w in _LIMIT_WORDS):
+        msg = ""
+        if isinstance(pl, dict):
+            msg = ((pl.get("meta") or {}).get("message")
+                   or (pl.get("message") if isinstance(pl.get("message"), str) else ""))
+        return tail, "limit", (msg or "суточный лимит/тариф").strip()
     if r.status_code in (401, 403):
         return tail, "invalid", f"HTTP {r.status_code} (невалиден/нет доступа)"
     meta = pl.get("meta") if isinstance(pl, dict) else None
@@ -57,6 +68,7 @@ def main():
     p.add_argument("--key", action="append", default=[], help="ключ(и) прямо в аргументе")
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--show-alive", action="store_true", help="печатать и живые ключи построчно")
+    p.add_argument("--debug", action="store_true", help="показать сырой ответ сервера по каждому ключу")
     args = p.parse_args()
 
     keys: list[str] = []
@@ -78,9 +90,10 @@ def main():
     session = requests.Session()
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
 
+    conc = 1 if args.debug else max(1, args.concurrency)   # в debug — по одному, чтобы лог был читаемым
     results = []
-    with ThreadPoolExecutor(max_workers=max(1, args.concurrency)) as ex:
-        for res in ex.map(lambda k: check_one(session, k), uniq):
+    with ThreadPoolExecutor(max_workers=conc) as ex:
+        for res in ex.map(lambda k: check_one(session, k, args.debug), uniq):
             results.append(res)
 
     cats = {"alive": [], "limit": [], "invalid": [], "net": []}
