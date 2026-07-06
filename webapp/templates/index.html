@@ -60,6 +60,12 @@
     .grps { padding:2px 0 8px 40px; display:grid; gap:2px 18px;
       grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); }
     .grp { display:flex; align-items:center; gap:8px; padding:2px 0; }
+    /* лог прогона */
+    pre#log { margin:0; max-height:280px; overflow:auto; background:#05080f;
+      border:1px solid #1e293b; border-radius:8px; padding:10px 12px;
+      font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+      font-size:12px; line-height:1.5; color:#b6c2d4; white-space:pre-wrap;
+      word-break:break-word; }
   </style>
 </head>
 <body>
@@ -211,6 +217,30 @@
         </div>
         <div id="autostatus" class="muted" style="margin-top:10px;"></div>
       </div>
+
+      <div style="margin-top:18px; padding:14px; border:1px solid #334155; border-radius:10px; background:#0b1220;">
+        <b>🌐 Дообогатить базу через сайт (по ИНН, без лимита API)</b>
+        <div class="muted" style="margin:4px 0 10px;">Берёт ИНН из готовой базы-списка и тянет контакты
+          (телефоны/почты/сайты) прямо со страниц checko — не тратит запросы API. Докачиваемо:
+          уже обработанные ИНН пропускает. Для открытых контактов нужны куки авторизованного аккаунта
+          (поле «Куки» вверху при источнике «Сайт», либо сохранённые).</div>
+        <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+          <div style="width:200px;">
+            <label>Файл-список (ИНН)</label>
+            <input name="input_csv" id="input_csv" value="list.csv" placeholder="list.csv">
+          </div>
+          <div style="width:200px;">
+            <label>Куда писать</label>
+            <input name="output_csv" id="output_csv" value="full_site.csv" placeholder="full_site.csv">
+          </div>
+          <div style="width:130px;">
+            <label>Задержка, сек</label>
+            <input type="number" name="delay" value="2" step="0.5" min="0.5">
+          </div>
+          <button type="button" id="enrichsitebtn">Дообогатить через сайт</button>
+        </div>
+        <div id="enrichsitestatus" class="muted" style="margin-top:10px;"></div>
+      </div>
     </form>
   </div>
 
@@ -226,6 +256,15 @@
       <span class="muted">(в таблице — первые 500 строк, в файлах — все)</span>
     </div>
     <div class="err" id="err"></div>
+    <div style="margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <b class="muted">Лог прогона</b>
+        <label class="muted" style="font-weight:normal; font-size:12px;">
+          <input type="checkbox" id="logautoscroll" checked style="vertical-align:middle;"> автопрокрутка
+        </label>
+      </div>
+      <pre id="log">—</pre>
+    </div>
     <div class="tablewrap">
       <table>
         <thead><tr>
@@ -391,6 +430,26 @@ form.addEventListener('submit', async (e) => {
   poll(data.job_id);
 });
 
+// Дообогащение через сайт (по ИНН)
+document.getElementById('enrichsitebtn').addEventListener('click', async () => {
+  const btn = document.getElementById('enrichsitebtn');
+  const st = document.getElementById('enrichsitestatus');
+  btn.disabled = true; st.textContent = 'Запускаю…';
+  document.getElementById('resultcard').style.display = 'block';
+  document.getElementById('rows').innerHTML = '';
+  document.getElementById('err').textContent = '';
+  document.getElementById('downloads').style.display = 'none';
+  document.getElementById('log').textContent = '—';
+  try {
+    const resp = await fetch(BASE + '/enrich-site', { method: 'POST', body: new FormData(form) });
+    const data = await resp.json();
+    if (!resp.ok) { st.textContent = data.error || 'Ошибка'; btn.disabled = false; return; }
+    st.textContent = 'Идёт дообогащение через сайт: ИНН в очереди — ' + (data.total || 0);
+    poll(data.job_id);
+  } catch (e) { st.textContent = 'Ошибка: ' + e; }
+  btn.disabled = false;
+});
+
 function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function poll(jobId) {
@@ -401,7 +460,14 @@ function poll(jobId) {
     const s = await r.json();
     document.getElementById('st').textContent = s.status;
     document.getElementById('found').textContent = s.found;
-    document.getElementById('scanned').textContent = s.scanned;
+    document.getElementById('scanned').textContent = s.total ? (s.scanned + ' / ' + s.total) : s.scanned;
+
+    // лог прогона
+    const logEl = document.getElementById('log');
+    if (s.log && s.log.length) {
+      logEl.textContent = s.log.join('\n');
+      if (document.getElementById('logautoscroll').checked) logEl.scrollTop = logEl.scrollHeight;
+    }
 
     const tbody = document.getElementById('rows');
     tbody.innerHTML = s.rows.map(row => `<tr>

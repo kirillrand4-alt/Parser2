@@ -432,6 +432,64 @@ def iter_enrich(config: PipelineConfig, inns, on_progress=None, skip: set | None
         print(f"  [api] дообогащено: {count}, ошибок: {errors}", file=sys.stderr)
 
 
+def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
+                     skip: set | None = None) -> Iterator[Company]:
+    """Дообогащение по ГОТОВОМУ списку ИНН ЧЕРЕЗ САЙТ checko (HTML, без API-лимита).
+
+    Ходит по страницам /company/<ИНН>, тянет контакты из HTML. Последовательно
+    и с задержкой (сайт чувствителен к частоте). skip — уже обогащённые ИНН.
+    Для открытых контактов нужны куки авторизованного аккаунта (config.cookie)."""
+    import sys
+    from .site import CheckoSiteClient
+
+    client = CheckoSiteClient(cookie=config.cookie, delay=config.delay or 2.0,
+                              user_agent=config.user_agent)
+    if _proxies(config.proxy):
+        client.session.proxies.update(_proxies(config.proxy))
+        print(f"  [site] через прокси: {config.proxy}", file=sys.stderr, flush=True)
+    skip = skip or set()
+    todo, _seen = [], set()
+    for i in inns:
+        i = str(i).strip()
+        if i and i not in skip and i not in _seen:
+            _seen.add(i)
+            todo.append(i)
+    print(f"  [site] дообогащение через сайт: {len(todo)} ИНН"
+          f"{' (с куки)' if config.cookie else ' (без куки — контакты могут быть скрыты)'}",
+          file=sys.stderr, flush=True)
+
+    count = 0
+    errors = 0
+    fails = 0                      # ошибок подряд (блок/429)
+    MAX_FAILS = 15
+    try:
+        for inn in todo:
+            try:
+                c = client.card_by_inn(inn)
+                fails = 0 if not c.enrich_error else fails
+            except Exception as exc:  # noqa: BLE001
+                fails += 1
+                c = Company(inn=inn, enrich_source="site",
+                            enrich_error=f"{type(exc).__name__}: {exc}")
+                errors += 1
+                if fails >= MAX_FAILS:
+                    print(f"  [site] {fails} ошибок подряд — сайт блокирует запросы, "
+                          f"останавливаюсь (обогащено {count}). Позже продолжит с этого места.",
+                          file=sys.stderr, flush=True)
+                    yield c
+                    return
+            if config.only_active and c.status and not _is_active_status(c.status):
+                continue
+            yield c
+            count += 1
+            if on_progress:
+                on_progress(count)
+            if config.limit and count >= config.limit:
+                return
+    finally:
+        print(f"  [site] обогащено через сайт: {count}, ошибок: {errors}", file=sys.stderr, flush=True)
+
+
 def _iter_egrul(config: PipelineConfig, on_progress) -> Iterator[Company]:
     matcher = _matcher(config)
     client = (

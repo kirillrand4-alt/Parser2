@@ -37,7 +37,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from metalparser.export import CsvAppender, write_excel_from_csv, read_existing_keys
 from metalparser.okved import OKVED_SETS, OKVED_SET_LABELS, DEFAULT_SET, OKVED_TREE
-from metalparser.pipeline import PipelineConfig, iter_run, count_companies
+from metalparser.pipeline import PipelineConfig, iter_run, count_companies, iter_enrich_site
 
 app = Flask(__name__)
 # Работа за обратным прокси (nginx) — корректные схемы/префиксы для поддомена/пути
@@ -106,6 +106,50 @@ def parse_okved_codes(form) -> list[str]:
 # Состояние задач в памяти (один процесс). job_id -> dict
 JOBS: dict[str, dict] = {}
 _LOCK = threading.Lock()
+
+
+class _TeeStderr:
+    """Дублирует stderr: пишет в реальный поток И в буфер лога той задачи,
+    в потоке которой идёт запись (чтобы показывать логи прогона в вебе)."""
+
+    def __init__(self, real):
+        self.real = real
+        self._bufs: dict[int, list] = {}   # thread ident -> список строк
+        self._lock = threading.Lock()
+
+    def register(self, buf):
+        with self._lock:
+            self._bufs[threading.get_ident()] = buf
+
+    def unregister(self):
+        with self._lock:
+            self._bufs.pop(threading.get_ident(), None)
+
+    def write(self, s):
+        try:
+            self.real.write(s)
+        except Exception:  # noqa: BLE001
+            pass
+        buf = self._bufs.get(threading.get_ident())
+        if buf is not None and s and s.strip():
+            with self._lock:
+                for line in s.rstrip("\n").split("\n"):
+                    if line.strip():
+                        buf.append(line)
+                if len(buf) > 600:            # ограничиваем размер
+                    del buf[:len(buf) - 600]
+
+    def flush(self):
+        try:
+            self.real.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+import sys as _sys  # noqa: E402
+if not isinstance(_sys.stderr, _TeeStderr):
+    _sys.stderr = _TeeStderr(_sys.stderr)
+_TEE = _sys.stderr
 
 # ---------- Автосбор в общую базу (data/base.csv), фоновый цикл ----------
 BASE_CSV = os.path.join(OUTPUT_DIR, "base.csv")
@@ -279,6 +323,8 @@ def logout():
 
 def _worker(job_id: str, config: PipelineConfig):
     job = JOBS[job_id]
+    job.setdefault("log", [])
+    _TEE.register(job["log"])
     csv_path = os.path.join(OUTPUT_DIR, f"{job_id}.csv")
     xlsx_path = os.path.join(OUTPUT_DIR, f"{job_id}.xlsx")
     appender = CsvAppender(csv_path)   # потоковая запись — результат не теряется
@@ -314,6 +360,105 @@ def _worker(job_id: str, config: PipelineConfig):
                 job["xlsx"] = xlsx_path
             job["status"] = "error"
             job["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        _TEE.unregister()
+
+
+def _read_inns_from_csv(path: str) -> list[str]:
+    """ИНН из CSV-базы (столбец «ИНН»), с сохранением порядка и без дублей."""
+    import csv as _csv
+    out, seen = [], set()
+    if not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        for row in _csv.DictReader(fh, delimiter=";"):
+            v = (row.get("ИНН") or row.get("inn") or "").strip()
+            if v and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return out
+
+
+def _enrich_site_worker(job_id: str, config: PipelineConfig, input_csv: str, output_csv: str):
+    """Фоновое дообогащение по ИНН ЧЕРЕЗ САЙТ (HTML). Докачиваемо: пропускает
+    уже обогащённые в output_csv."""
+    job = JOBS[job_id]
+    job.setdefault("log", [])
+    _TEE.register(job["log"])
+    xlsx_path = os.path.splitext(output_csv)[0] + ".xlsx"
+    inns = _read_inns_from_csv(input_csv)
+    skip = read_existing_keys(output_csv)
+    with _LOCK:
+        job["total"] = len(inns)
+        job["skip"] = len(skip)
+    appender = CsvAppender(output_csv)
+    try:
+        def on_progress(done):
+            with _LOCK:
+                job["scanned"] = done
+
+        for c in iter_enrich_site(config, inns, on_progress=on_progress, skip=skip):
+            appender.write(c)
+            with _LOCK:
+                job["found"] += 1
+                if len(job["rows"]) < 500:
+                    job["rows"].append(c.to_row())
+        appender.close()
+        write_excel_from_csv(output_csv, xlsx_path)
+        with _LOCK:
+            job["csv"] = output_csv
+            job["xlsx"] = xlsx_path
+            job["status"] = "done"
+            job["finished"] = time.time()
+    except Exception as exc:  # noqa: BLE001
+        appender.close()
+        try:
+            write_excel_from_csv(output_csv, xlsx_path)
+        except Exception:  # noqa: BLE001
+            pass
+        with _LOCK:
+            if os.path.exists(output_csv) and os.path.getsize(output_csv) > 0:
+                job["csv"] = output_csv
+                job["xlsx"] = xlsx_path
+            job["status"] = "error"
+            job["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        _TEE.unregister()
+
+
+@app.route("/enrich-site", methods=["POST"])
+@login_required
+def enrich_site():
+    """Дообогащение готовой базы контактами ЧЕРЕЗ САЙТ checko (по ИНН, без API-лимита)."""
+    f = request.form
+    input_csv = (f.get("input_csv") or "").strip() or os.path.join(OUTPUT_DIR, "list.csv")
+    if not os.path.isabs(input_csv):
+        input_csv = os.path.join(OUTPUT_DIR, os.path.basename(input_csv))
+    if not os.path.exists(input_csv):
+        return jsonify({"error": f"Нет файла-базы: {input_csv}. Укажите имя CSV со столбцом ИНН."}), 400
+    inns = _read_inns_from_csv(input_csv)
+    if not inns:
+        return jsonify({"error": f"В {input_csv} не найдено ИНН (нужен столбец «ИНН»)."}), 400
+
+    output_csv = (f.get("output_csv") or "").strip() or "full_site.csv"
+    output_csv = os.path.join(OUTPUT_DIR, os.path.basename(output_csv))
+    cookie = resolve_cookie(f.get("cookie"))
+    config = PipelineConfig(
+        source="site", cookie=cookie,
+        only_active=f.get("only_active", "on") == "on",
+        user_agent=load_saved().get("ua") or os.environ.get("CHECKO_UA"),
+        delay=float(f.get("delay", "2.0") or 2.0),
+        limit=int(f.get("limit", "0") or 0),
+        proxy=(f.get("proxy") or "").strip() or load_saved().get("proxy") or os.environ.get("CHECKO_PROXY"),
+    )
+    job_id = uuid.uuid4().hex[:12]
+    JOBS[job_id] = {
+        "status": "running", "found": 0, "scanned": 0, "rows": [],
+        "error": "", "started": time.time(), "total": len(inns),
+    }
+    threading.Thread(target=_enrich_site_worker,
+                     args=(job_id, config, input_csv, output_csv), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(inns)})
 
 
 @app.route("/")
@@ -481,8 +626,10 @@ def status(job_id: str):
             "status": job["status"],
             "found": job["found"],
             "scanned": job["scanned"],
+            "total": job.get("total", 0),
             "error": job.get("error", ""),
             "rows": job["rows"][:500],  # в таблицу — первые 500
+            "log": job.get("log", [])[-300:],   # последние строки лога
             "has_files": bool(job.get("csv")),
         })
 

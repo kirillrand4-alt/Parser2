@@ -121,6 +121,22 @@ class CheckoSiteClient:
         r.raise_for_status()
         return parse_card(r.text, ogrn=ogrn, okved_code=okved_code)
 
+    def card_by_inn(self, inn: str, okved_code: str = "") -> Company:
+        """Карточка по ИНН: checko отдаёт страницу /company/<ИНН> (с редиректом
+        на канонический адрес). Разбираем контакты из HTML."""
+        r = self._get(CARD_URL.format(ident=inn))
+        r.raise_for_status()
+        c = parse_card(r.text, okved_code=okved_code)
+        if not c.inn:
+            c.inn = inn
+        # ОГРН из финального URL (…-<13 цифр>), если удалось
+        m = re.search(r"-(\d{13})(?:[/?#]|$)", getattr(r, "url", "") or "")
+        if m and not c.ogrn:
+            c.ogrn = m.group(1)
+        if not c.name:
+            c.enrich_error = "карточка не найдена/страница без данных"
+        return c
+
 
 def parse_card(html: str, ogrn: str = "", okved_code: str = "") -> Company:
     """Разбирает HTML карточки компании checko в Company."""
