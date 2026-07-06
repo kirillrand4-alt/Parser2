@@ -36,7 +36,7 @@ def check_one(session, key: str, debug: bool = False) -> tuple[str, str, str]:
     try:
         r = session.get(SEARCH_URL, params=params, timeout=20)
     except Exception as exc:  # noqa: BLE001
-        return tail, "net", f"сеть: {type(exc).__name__}"
+        return tail, "net", f"сеть: {type(exc).__name__}: {exc}"
     raw = r.text or ""
     try:
         pl = r.json()
@@ -93,7 +93,15 @@ def main():
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
     proxy = args.proxy or os.environ.get("CHECKO_PROXY")
     if proxy:
-        session.proxies.update({"http": proxy.strip(), "https": proxy.strip()})
+        proxy = proxy.strip()
+        if proxy.lower().startswith("socks"):
+            try:
+                import socks  # noqa: F401  (PySocks)
+            except Exception:  # noqa: BLE001
+                print("Для SOCKS-прокси нужен пакет PySocks. Установи:\n"
+                      "    .venv\\Scripts\\pip install \"requests[socks]\"", file=sys.stderr)
+                return 3
+        session.proxies.update({"http": proxy, "https": proxy})
         print(f"Через прокси: {proxy}", flush=True)
 
     conc = 1 if args.debug else max(1, args.concurrency)   # в debug — по одному, чтобы лог был читаемым
