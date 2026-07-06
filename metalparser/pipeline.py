@@ -241,32 +241,43 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     try:
         with ThreadPoolExecutor(max_workers=conc) as ex:
             done = done_codes or set()
+            extract_total = CheckoClient.extract_search_total
+            todo = [q for q in queries if q not in done]
+            print(f"  [api] кодов к обработке: {len(todo)} "
+                  f"(пропущено пройденных: {len(queries) - len(todo)})", file=sys.stderr)
             for region in regions:
-                for query in queries:
+                for qi, query in enumerate(queries, 1):
                     # Код уже полностью пройден в прошлом прогоне — пропускаем целиком,
                     # не пролистывая заново (экономим запросы при докачке).
                     if query in done:
                         continue
                     # 1) перечисляем ИНН по коду (поиск, через пул, последовательно).
                     #    Стоп, если страница не принесла НИ ОДНОГО нового ИНН
-                    #    (checko повторяет записи на «лишних» страницах).
+                    #    (checko повторяет записи на «лишних» страницах) ИЛИ уже
+                    #    увидели все ЗапВсего записей.
                     inns = []
                     page_all: set[str] = set()
+                    new_for_code = 0
+                    total = None
                     page = 1
                     search_ok = True     # код пройден до конца (не оборван лимитом/ошибкой)
+                    print(f"  [api] [{qi}/{len(queries)}] код {query}: листаю…", file=sys.stderr)
                     while page <= MAX_SEARCH_PAGES:
                         try:
                             stats["search"] += 1
                             payload = pooled_api_get(session, pool, SEARCH_URL,
                                                      build_search_params(query, region, config.only_active, page))
                         except CheckoLimit:
-                            print(f"  [api] лимит всех ключей исчерпан на поиске (собрано {count}). "
-                                  f"Завтра докачает.", file=sys.stderr)
+                            print(f"  [api] лимит всех ключей исчерпан на поиске "
+                                  f"(код {query}, стр.{page}, собрано {count}). Завтра докачает.",
+                                  file=sys.stderr)
                             return
                         except Exception as exc:  # noqa: BLE001
                             print(f"  [api] {query} стр.{page}: {exc}", file=sys.stderr)
                             search_ok = False
                             break
+                        if total is None:
+                            total = extract_total(payload) or 0
                         recs = extract_search_records(payload)
                         if not recs:
                             break
@@ -286,6 +297,7 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                                     stub.okved_code = query
                                     stub.okved_name = _okved_name(query) or stub.okved_name
                                     stub.enrich_source = "api-list"
+                                    new_for_code += 1
                                     yield stub
                                     count += 1
                                     if on_progress:
@@ -294,11 +306,21 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
                                         return
                         if fresh_page == 0:      # повтор/конец — дальше листать бессмысленно
                             break
+                        # уже увидели все записи по коду (ЗапВсего) — дальше только повторы
+                        if total and len(page_all) >= total:
+                            break
+                        if page % 25 == 0:       # heartbeat на длинных кодах
+                            tot = f"/~{total}" if total else ""
+                            print(f"  [api]   {query}: стр.{page}, увидено {len(page_all)}{tot}, "
+                                  f"новых {new_for_code}, живых ключей {pool.alive()}", file=sys.stderr)
                         page += 1
                     if not config.enrich_contacts:
                         # список по коду собран целиком — отмечаем чекпоинт
                         if search_ok and on_code_done:
                             on_code_done(query)
+                        print(f"  [api] [{qi}/{len(queries)}] код {query}: готов "
+                              f"(+{new_for_code} новых, увидено {len(page_all)}"
+                              f"{'/' + str(total) if total else ''})", file=sys.stderr)
                         continue
                     # 2) параллельно тянем карточки
                     futures = {ex.submit(fetch_card, inn, query): inn for inn in inns}
