@@ -54,6 +54,7 @@ class PipelineConfig:
     concurrency: int = 1               # source=api: одновременных запросов (по ключам)
     regions: list[str] = field(default_factory=list)  # пусто = вся РФ
     proxy: str | None = None           # прокси для запросов, напр. http://user:pass@host:port
+    key_check: bool = True             # предварительная проверка ключей перед сбором
 
 
 def _matcher(config: PipelineConfig) -> OkvedMatcher:
@@ -182,9 +183,12 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     queries = search_codes(matcher.prefixes)
     regions = config.regions or [None]
 
+    if not config.key_check:
+        print(f"  [api] без предварительной проверки ключей — нерабочие отсеются "
+              f"по ходу сбора (ключей: {pool.total()})", file=sys.stderr, flush=True)
     # Быстрая параллельная проверка ключей — отсеять мёртвые/невалидные заранее,
     # чтобы в процессе не было пауз на переборе (живой ключ тратит 1 лёгкий запрос).
-    if pool.total() > 5 and queries:
+    if config.key_check and pool.total() > 5 and queries:
         print(f"  [api] проверяю {pool.total()} ключ(ей) "
               f"{'через прокси ' if config.proxy else ''}(до 15с на ключ)…",
               file=sys.stderr, flush=True)

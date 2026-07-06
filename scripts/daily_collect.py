@@ -147,6 +147,8 @@ def build_parser():
     p.add_argument("--interval", type=float, default=24.0, help="часы между прогонами в --loop")
     p.add_argument("--proxy", default=None,
                    help="прокси для запросов, напр. http://user:pass@host:port (или env CHECKO_PROXY)")
+    p.add_argument("--no-key-check", action="store_true",
+                   help="не проверять ключи заранее (нерабочие отсеются по ходу; экономит запросы)")
     return p
 
 
@@ -171,6 +173,7 @@ def main():
         delay=args.delay,
         concurrency=args.concurrency,
         proxy=args.proxy or os.environ.get("CHECKO_PROXY"),
+        key_check=not args.no_key_check,
     )
     xlsx = None if args.no_xlsx else args.xlsx
 
