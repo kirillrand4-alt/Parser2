@@ -179,14 +179,29 @@ class CheckoSiteClient:
             return Company(inn=inn, okved_code=okved_code, enrich_source="site",
                            enrich_error="ОГРН не найден по ИНН (поиск не дал результата)")
         # реферер = страница поиска (как будто перешли из результатов поиска)
+        card_url = CARD_URL.format(ident=ogrn)
         ref = "https://checko.ru/search?query=" + inn
-        r = self._get(CARD_URL.format(ident=ogrn), referer=ref)
+        r = self._get(card_url, referer=ref)
         r.raise_for_status()
         c = parse_card(r.text, ogrn=ogrn, okved_code=okved_code)
         if not c.inn:
             c.inn = inn
         if not c.name:
             c.enrich_error = "карточка не найдена/страница без данных"
+        # Все ОКВЭД: на карточке таблица обрезана (~10). Если видов больше —
+        # дозагружаем полную подстраницу /activity (ещё 1 запрос, только когда нужно).
+        _, _, _, total = extract_okved_from_card(r.text)
+        if total > 1 + len(c.okved_extra) and c.okved_code:
+            try:
+                ar = self._get(card_url + "/activity", referer=card_url)
+                if ar.status_code == 200:
+                    amc, amn, aextra = _parse_okved_rows(ar.text)
+                    if aextra:
+                        c.okved_extra = aextra
+                    if amc:
+                        c.okved_code, c.okved_name = amc, amn
+            except Exception:  # noqa: BLE001
+                pass          # не удалось — остаёмся с частичным списком с карточки
         return c
 
 
@@ -194,30 +209,38 @@ _OKVED_SECTION_RE = re.compile(r'<section id="activity".*?</section>', re.S)
 _OKVED_ROW_RE = re.compile(r'<td[^>]*>\s*(\d{2}(?:\.\d+)*)\s*</td>\s*<td[^>]*>(.*?)</td>', re.S)
 _ACTIVITY_CODE_RE = re.compile(r'id="activity-name"[^>]*>\s*([\d.]+)\s*<')
 _ACTIVITY_TEXT_RE = re.compile(r"text_to_cb\('([^']*)',\s*'activity-name'\)")
+# «Все виды деятельности компании (14)» — сколько ОКВЭД всего у компании
+_OKVED_TOTAL_RE = re.compile(r'Все виды деятельности[^(]*\((\d+)\)')
 
 
 def _strip_tags(s: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s)).strip()
 
 
-def extract_okved_from_card(html: str) -> tuple[str, str, list[str]]:
-    """→ (осн_код, осн_наименование, [доп_коды]) из карточки checko.
-    Основной помечен «Основной вид деятельности»; иначе — первая строка таблицы."""
+def _parse_okved_rows(block: str) -> tuple[str, str, list[str]]:
+    """Из HTML-таблицы ОКВЭД: (осн_код, осн_наименование, [доп_коды])."""
+    rows = _OKVED_ROW_RE.findall(block)
     main_code = main_name = ""
     extra: list[str] = []
+    for code, name_html in rows:
+        if "Основной вид деятельности" in name_html:
+            main_code = code
+            main_name = _strip_tags(_html.unescape(name_html))
+        else:
+            extra.append(code)
+    if not main_code and rows:                # маркер не найден — первый = основной
+        main_code = rows[0][0]
+        main_name = _strip_tags(_html.unescape(rows[0][1]))
+        extra = [c for c, _ in rows[1:]]
+    return main_code, main_name, extra
+
+
+def extract_okved_from_card(html: str) -> tuple[str, str, list[str], int]:
+    """→ (осн_код, осн_наименование, [доп_коды], всего_видов) из карточки checko.
+    всего_видов — из ссылки «Все виды деятельности (N)»; если её нет — по факту."""
     sec = _OKVED_SECTION_RE.search(html)
-    if sec:
-        rows = _OKVED_ROW_RE.findall(sec.group(0))
-        for code, name_html in rows:
-            if "Основной вид деятельности" in name_html:
-                main_code = code
-                main_name = _strip_tags(_html.unescape(name_html))
-            else:
-                extra.append(code)
-        if not main_code and rows:            # маркер не найден — первый = основной
-            main_code = rows[0][0]
-            main_name = _strip_tags(_html.unescape(rows[0][1]))
-            extra = [c for c, _ in rows[1:]]
+    block = sec.group(0) if sec else html
+    main_code, main_name, extra = _parse_okved_rows(block)
     if not main_code:                         # запасной путь: блок «Вид деятельности»
         m = _ACTIVITY_CODE_RE.search(html)
         if m:
@@ -225,14 +248,16 @@ def extract_okved_from_card(html: str) -> tuple[str, str, list[str]]:
         mn = _ACTIVITY_TEXT_RE.search(html)
         if mn:
             main_name = _html.unescape(mn.group(1))
-    return main_code, main_name, extra
+    mt = _OKVED_TOTAL_RE.search(block) or _OKVED_TOTAL_RE.search(html)
+    total = int(mt.group(1)) if mt else (1 + len(extra) if main_code else len(extra))
+    return main_code, main_name, extra, total
 
 
 def parse_card(html: str, ogrn: str = "", okved_code: str = "") -> Company:
     """Разбирает HTML карточки компании checko в Company."""
     c = Company(ogrn=ogrn)
     # ОКВЭД берём ПРЯМО из карточки (точный код + все дополнительные)
-    mc, mn, extra = extract_okved_from_card(html)
+    mc, mn, extra, total = extract_okved_from_card(html)
     if mc:
         c.okved_code = mc
         c.okved_name = mn or OKVED_NAMES.get(mc, "")
