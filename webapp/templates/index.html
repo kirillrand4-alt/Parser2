@@ -239,6 +239,11 @@
           </div>
           <button type="button" id="enrichsitebtn">Дообогатить через сайт</button>
         </div>
+        <div style="margin-top:10px;">
+          <label>Прокси (по желанию) — http://user:pass@host:port или socks5h://user:pass@host:port</label>
+          <input name="proxy" id="site_proxy" style="width:100%;"
+                 placeholder="напр. http://user:pass@1.2.3.4:8080 (socks работает только в HTTP-режиме)">
+        </div>
         <label class="chk" style="display:block; margin-top:10px;">
           <input type="checkbox" name="site_browser" id="site_browser">
           через настоящий браузер (Playwright) — надёжнее против блокировок, но медленнее
