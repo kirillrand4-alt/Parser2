@@ -452,11 +452,16 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
             from .browser import BrowserSiteClient
             client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0)
         except Exception as exc:  # noqa: BLE001
+            from .browser import DEFAULT_BROWSERS_DIR
             print(f"  [site] НЕ удалось запустить браузер: {type(exc).__name__}: {exc}",
                   file=sys.stderr, flush=True)
-            print("  [site] установи один раз:  .venv\\Scripts\\pip install playwright  и  "
-                  ".venv\\Scripts\\playwright install chromium  — или сними галочку «браузер» "
-                  "(тогда обычные HTTP-запросы).", file=sys.stderr, flush=True)
+            print(f"  [site] поставь Chromium в стабильную папку проекта (не в профиль "
+                  f"аккаунта). В PowerShell из C:\\seostat\\Parser2:\n"
+                  f"    $env:PLAYWRIGHT_BROWSERS_PATH = \"{DEFAULT_BROWSERS_DIR}\"\n"
+                  f"    .\\.venv\\Scripts\\python.exe -m pip install playwright\n"
+                  f"    .\\.venv\\Scripts\\python.exe -m playwright install chromium\n"
+                  f"  затем перезапусти сайт. Либо сними галочку «браузер» (HTTP-режим).",
+                  file=sys.stderr, flush=True)
             return
         print("  [site] браузер запущен: профиль/куки из настроек", file=sys.stderr, flush=True)
     else:

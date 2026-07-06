@@ -21,6 +21,11 @@ from .models import Company
 from .site import CARD_URL, CATALOG_URL, code6, parse_card, _OGRN_LINK_RE
 
 DEFAULT_PROFILE = os.path.join(os.path.dirname(__file__), "..", "data", "browser_profile")
+# Стабильная папка для скачанных браузеров Playwright — НЕ зависит от того, под
+# каким аккаунтом (SYSTEM/служба/пользователь) запущено приложение. Сюда же
+# ставить: PLAYWRIGHT_BROWSERS_PATH=<эта папка> playwright install chromium
+DEFAULT_BROWSERS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "data", "pw-browsers"))
 
 
 class BrowserSiteClient:
@@ -39,6 +44,10 @@ class BrowserSiteClient:
         self._start()
 
     def _start(self):
+        # Пусть Playwright ищет браузеры в стабильной папке проекта (если путь
+        # не задан явно) — иначе он смотрит в профиль запускающего аккаунта.
+        if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH") and os.path.isdir(DEFAULT_BROWSERS_DIR):
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = DEFAULT_BROWSERS_DIR
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
         args = ["--no-sandbox", "--disable-dev-shm-usage",
