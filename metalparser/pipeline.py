@@ -173,19 +173,39 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     # чтобы в процессе не было пауз на переборе (живой ключ тратит 1 лёгкий запрос).
     if pool.total() > 5 and queries:
         _pp = build_search_params(queries[0], regions[0], config.only_active, 1)
+        _reasons = {}          # ключ (обрезанный) → почему выбыл
+        _rlock = __import__("threading").Lock()
 
         def _probe(k):
+            reason = None
             try:
                 r = session.get(SEARCH_URL, params={**_pp, "key": k}, timeout=15)
-                pl = r.json()
-                if _is_limit_meta(pl) or r.status_code in (401, 403):
-                    pool.mark_dead(k)
-            except Exception:  # noqa: BLE001
-                pass
+                try:
+                    pl = r.json()
+                except Exception:  # noqa: BLE001
+                    pl = {}
+                if r.status_code in (401, 403):
+                    reason = f"HTTP {r.status_code} (ключ невалиден/нет доступа)"
+                elif _is_limit_meta(pl):
+                    meta = pl.get("meta") if isinstance(pl, dict) else None
+                    reason = (meta or {}).get("message") or "лимит/тариф"
+            except Exception as exc:  # noqa: BLE001
+                reason = f"сеть: {type(exc).__name__}"      # не считаем мёртвым по сети
+            if reason and "сеть:" not in reason:
+                pool.mark_dead(k)
+                with _rlock:
+                    _reasons[f"…{k[-4:]}"] = reason
 
         with ThreadPoolExecutor(max_workers=min(10, pool.total())) as _pex:
             list(_pex.map(_probe, pool.keys_snapshot()))
         print(f"  [api] живых ключей: {pool.alive()} из {pool.total()}", file=sys.stderr)
+        if _reasons:
+            # сводка причин выбывания: одинаковые сообщения группируем
+            by_msg = {}
+            for msg in _reasons.values():
+                by_msg[msg] = by_msg.get(msg, 0) + 1
+            for msg, cnt in sorted(by_msg.items(), key=lambda x: -x[1]):
+                print(f"    ↳ {cnt} ключ(ей) выбыло: {msg}", file=sys.stderr)
         if pool.alive() == 0:
             print("  [api] нет живых ключей (исчерпаны/невалидны). Завтра докачает.", file=sys.stderr)
             return
