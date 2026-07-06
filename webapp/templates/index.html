@@ -460,6 +460,12 @@ function poll(jobId) {
   if (timer) clearInterval(timer);
   timer = setInterval(async () => {
     const r = await fetch(BASE + '/status/' + jobId);
+    if (r.status === 401) {
+      clearInterval(timer);
+      document.getElementById('err').textContent =
+        'Сессия истекла — обновите страницу (F5) и войдите заново. Сбор при этом продолжается на сервере.';
+      return;
+    }
     if (!r.ok) return;
     const s = await r.json();
     document.getElementById('st').textContent = s.status;

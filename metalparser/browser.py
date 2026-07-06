@@ -31,12 +31,15 @@ DEFAULT_BROWSERS_DIR = os.path.abspath(
 class BrowserSiteClient:
     def __init__(self, cookie: str | None = None, user_data_dir: str | None = None,
                  headless: bool | None = None, delay: float = 1.5, timeout: float = 45000,
-                 executable_path: str | None = None):
+                 executable_path: str | None = None, persistent: bool | None = None):
         self.cookie = cookie or os.environ.get("CHECKO_COOKIE") or None
         self.user_data_dir = user_data_dir or os.environ.get("CHECKO_PROFILE") or DEFAULT_PROFILE
-        os.makedirs(self.user_data_dir, exist_ok=True)
         env_headless = os.environ.get("CHECKO_HEADLESS")
         self.headless = headless if headless is not None else (env_headless != "0")
+        # persistent=True — постоянный профиль (для входа scripts/browser_login.py).
+        # persistent=False — эфемерный браузер (для дообогащения по кукам): не
+        # зависит от возможно повреждённого профиля.
+        self.persistent = persistent if persistent is not None else (self.cookie is None)
         self.delay = delay
         self.timeout = timeout
         self.executable_path = executable_path or os.environ.get("PLAYWRIGHT_CHROME") or None
@@ -52,11 +55,19 @@ class BrowserSiteClient:
         self._pw = sync_playwright().start()
         args = ["--no-sandbox", "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled"]
-        kwargs = {"headless": self.headless, "args": args,
-                  "locale": "ru-RU", "viewport": {"width": 1366, "height": 768}}
+        common = {"locale": "ru-RU", "viewport": {"width": 1366, "height": 768}}
+        launch = {"headless": self.headless, "args": args}
         if self.executable_path:
-            kwargs["executable_path"] = self.executable_path
-        self.ctx = self._pw.chromium.launch_persistent_context(self.user_data_dir, **kwargs)
+            launch["executable_path"] = self.executable_path
+        if self.persistent:
+            os.makedirs(self.user_data_dir, exist_ok=True)
+            self.ctx = self._pw.chromium.launch_persistent_context(
+                self.user_data_dir, **launch, **common)
+            self._browser = None
+        else:
+            # эфемерный браузер — без профиля на диске (устойчиво к порче профиля)
+            self._browser = self._pw.chromium.launch(**launch)
+            self.ctx = self._browser.new_context(**common)
         if self.cookie:
             self._inject_cookie()
         self.page = self.ctx.pages[0] if self.ctx.pages else self.ctx.new_page()
@@ -133,6 +144,11 @@ class BrowserSiteClient:
     def close(self):
         try:
             self.ctx.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if getattr(self, "_browser", None):
+                self._browser.close()
         except Exception:  # noqa: BLE001
             pass
         try:

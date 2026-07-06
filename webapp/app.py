@@ -42,7 +42,33 @@ from metalparser.pipeline import PipelineConfig, iter_run, count_companies, iter
 app = Flask(__name__)
 # Работа за обратным прокси (nginx) — корректные схемы/префиксы для поддомена/пути
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+
+
+def _secret_key() -> str:
+    """Постоянный ключ подписи сессии: env → файл data/.secret_key → создаём.
+    Постоянство важно, иначе каждый перезапуск сайта разлогинивает всех."""
+    env = os.environ.get("SECRET_KEY")
+    if env:
+        return env
+    path = os.path.join(os.path.dirname(__file__), "..", "data", ".secret_key")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            k = fh.read().strip()
+            if k:
+                return k
+    except Exception:  # noqa: BLE001
+        pass
+    k = secrets.token_hex(32)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(k)
+    except Exception:  # noqa: BLE001
+        pass
+    return k
+
+
+app.secret_key = _secret_key()
 
 # Учётные данные раздела
 PARSER_USERNAME = os.environ.get("PARSER_USERNAME", "admin")
@@ -290,6 +316,18 @@ def login_required(view):
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
         if not session.get("auth"):
+            # Для fetch/JSON-запросов отдаём 401 JSON (иначе фронт получит HTML
+            # логина и падает с «Unexpected token '<'»). Для страниц — редирект.
+            wants_json = (request.path not in ("", "/") and (
+                request.method == "POST"
+                or "application/json" in (request.headers.get("Accept") or "")
+                or request.headers.get("X-Requested-With") == "fetch"
+                or request.path.rsplit("/", 1)[-1] in ("status", "count")
+                or any(seg in request.path for seg in ("/start", "/status/", "/count",
+                                                       "/enrich-site", "/auto/"))))
+            if wants_json:
+                return jsonify({"error": "Сессия истекла — обновите страницу и войдите заново",
+                                "auth": False}), 401
             return redirect(url_for("login"))
         return view(*args, **kwargs)
     return wrapped

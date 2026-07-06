@@ -450,7 +450,10 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
               "10–30 сек при первом старте.", file=sys.stderr, flush=True)
         try:
             from .browser import BrowserSiteClient
-            client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0)
+            # persistent=False — не трогаем профиль на диске (он мог повредиться),
+            # авторизация через куки; для дообогащения профиль не нужен.
+            client = BrowserSiteClient(cookie=config.cookie, delay=config.delay or 2.0,
+                                       persistent=False)
         except Exception as exc:  # noqa: BLE001
             from .browser import DEFAULT_BROWSERS_DIR
             print(f"  [site] НЕ удалось запустить браузер: {type(exc).__name__}: {exc}",
