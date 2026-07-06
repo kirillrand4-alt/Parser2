@@ -145,6 +145,8 @@ def build_parser():
     p.add_argument("--browser", action="store_true", help="site: через настоящий браузер")
     p.add_argument("--loop", action="store_true", help="повторять автоматически")
     p.add_argument("--interval", type=float, default=24.0, help="часы между прогонами в --loop")
+    p.add_argument("--proxy", default=None,
+                   help="прокси для запросов, напр. http://user:pass@host:port (или env CHECKO_PROXY)")
     return p
 
 
@@ -168,6 +170,7 @@ def main():
         user_agent=os.environ.get("CHECKO_UA") or _saved("ua"),
         delay=args.delay,
         concurrency=args.concurrency,
+        proxy=args.proxy or os.environ.get("CHECKO_PROXY"),
     )
     xlsx = None if args.no_xlsx else args.xlsx
 

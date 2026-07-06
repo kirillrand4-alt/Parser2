@@ -81,6 +81,8 @@ def main():
     p.add_argument("--delay", type=float, default=1.0)
     p.add_argument("--all-statuses", action="store_true")
     p.add_argument("--main-okved-only", action="store_true")
+    p.add_argument("--proxy", default=None,
+                   help="прокси для запросов, напр. http://user:pass@host:port (или env CHECKO_PROXY)")
     args = p.parse_args()
 
     if not os.path.exists(args.input):
@@ -94,6 +96,7 @@ def main():
         source="api", api_key=read_keys_file(_KEYS_FILE) or os.environ.get("CHECKO_API_KEY") or _saved("api_key"),
         only_active=not args.all_statuses, main_okved_only=args.main_okved_only,
         concurrency=args.concurrency, delay=args.delay,
+        proxy=args.proxy or os.environ.get("CHECKO_PROXY"),
     )
     appender = CsvAppender(args.output)
     n = 0

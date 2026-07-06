@@ -184,6 +184,7 @@ def _auto_config(sel: dict) -> PipelineConfig:
         browser=sel.get("browser", False), user_agent=saved.get("ua") or os.environ.get("CHECKO_UA"),
         delay=sel.get("delay", 1.5), concurrency=sel.get("concurrency", 3),
         regions=sel.get("regions", []),
+        proxy=saved.get("proxy") or os.environ.get("CHECKO_PROXY"),
     )
 
 
@@ -432,6 +433,7 @@ def start():
         limit=int(f.get("limit", "0") or 0),
         concurrency=int(f.get("concurrency", "3") or 3),
         regions=regions,
+        proxy=(f.get("proxy") or "").strip() or load_saved().get("proxy") or os.environ.get("CHECKO_PROXY"),
     )
 
     job_id = uuid.uuid4().hex[:12]
@@ -459,6 +461,7 @@ def count():
         source="api", okved_set="none", extra_okved=okved_codes,
         only_active=f.get("only_active", "on") == "on",
         api_key=api_key, regions=regions,
+        proxy=load_saved().get("proxy") or os.environ.get("CHECKO_PROXY"),
     )
     try:
         per, total = count_companies(config, delay=0.3)

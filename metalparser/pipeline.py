@@ -53,10 +53,19 @@ class PipelineConfig:
     limit: int = 0                     # 0 = без ограничения
     concurrency: int = 1               # source=api: одновременных запросов (по ключам)
     regions: list[str] = field(default_factory=list)  # пусто = вся РФ
+    proxy: str | None = None           # прокси для запросов, напр. http://user:pass@host:port
 
 
 def _matcher(config: PipelineConfig) -> OkvedMatcher:
     return OkvedMatcher(resolve_prefixes(config.okved_set, config.extra_okved))
+
+
+def _proxies(proxy: str | None) -> dict | None:
+    """dict для requests.Session().proxies из одной строки прокси (http/https/socks5)."""
+    if not proxy:
+        return None
+    p = proxy.strip()
+    return {"http": p, "https": p}
 
 
 def iter_run(
@@ -164,6 +173,9 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
     conc = min(max(2, config.concurrency), max(1, pool.total()))
     session = _requests.Session()
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
+    if _proxies(config.proxy):
+        session.proxies.update(_proxies(config.proxy))
+        print(f"  [api] через прокси: {config.proxy}", file=sys.stderr)
     print(f"  [api] параллельно: {conc} одновременных запросов, ключей: {pool.total()}", file=sys.stderr)
 
     queries = search_codes(matcher.prefixes)
@@ -367,6 +379,9 @@ def iter_enrich(config: PipelineConfig, inns, on_progress=None, skip: set | None
     conc = min(max(2, config.concurrency), max(1, pool.total()))
     session = _requests.Session()
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
+    if _proxies(config.proxy):
+        session.proxies.update(_proxies(config.proxy))
+        print(f"  [api] через прокси: {config.proxy}", file=sys.stderr)
     skip = skip or set()
     todo = [str(i).strip() for i in inns if str(i).strip() and str(i).strip() not in skip]
     print(f"  [api] дообогащение: {len(todo)} ИНН, параллельно {conc}, ключей {pool.total()}",
@@ -433,7 +448,8 @@ def _iter_api(config: PipelineConfig, on_progress, skip: set | None = None,
     from .checko import CheckoLimit
     debug = os.environ.get("CHECKO_DEBUG") == "1"
     matcher = _matcher(config)
-    client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay)
+    client = CheckoClient(api_key=config.api_key, prefer_api=True, delay=config.delay,
+                          proxy=config.proxy)
     if len(getattr(client, "keys", []) or []) > 1:
         print(f"  [api] ключей в ротации: {len(client.keys)}", file=sys.stderr)
     # checko /v2/search ищет по точному коду-группе → разворачиваем префиксы
@@ -550,7 +566,8 @@ def count_companies(config: PipelineConfig, delay: float | None = None):
     Тратит по 1 лёгкому запросу поиска на код (× число регионов)."""
     import sys
     client = CheckoClient(api_key=config.api_key, prefer_api=True,
-                          delay=delay if delay is not None else config.delay)
+                          delay=delay if delay is not None else config.delay,
+                          proxy=config.proxy)
     print(f"  ключей в ротации: {len(client.keys)}", file=sys.stderr)
     if not client.keys:
         print("  [api] НЕТ КЛЮЧЕЙ — задайте --api-key, env CHECKO_API_KEY или сохраните в вебе.",

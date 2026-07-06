@@ -69,6 +69,8 @@ def main():
     p.add_argument("--concurrency", type=int, default=10)
     p.add_argument("--show-alive", action="store_true", help="печатать и живые ключи построчно")
     p.add_argument("--debug", action="store_true", help="показать сырой ответ сервера по каждому ключу")
+    p.add_argument("--proxy", default=None,
+                   help="прокси для запросов, напр. http://user:pass@host:port (или env CHECKO_PROXY)")
     args = p.parse_args()
 
     keys: list[str] = []
@@ -89,6 +91,10 @@ def main():
     print(f"Проверяю {len(uniq)} ключ(ей) из {args.keys_file} …", flush=True)
     session = requests.Session()
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
+    proxy = args.proxy or os.environ.get("CHECKO_PROXY")
+    if proxy:
+        session.proxies.update({"http": proxy.strip(), "https": proxy.strip()})
+        print(f"Через прокси: {proxy}", flush=True)
 
     conc = 1 if args.debug else max(1, args.concurrency)   # в debug — по одному, чтобы лог был читаемым
     results = []

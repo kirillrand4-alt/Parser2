@@ -225,6 +225,7 @@ class CheckoClient:
         timeout: float = 20.0,
         max_retries: int = 4,
         user_agent: str = DEFAULT_UA,
+        proxy: str | None = None,
     ):
         self.keys = _parse_keys(api_key or os.environ.get("CHECKO_API_KEY"))
         self.ki = 0                       # индекс текущего ключа (ротация)
@@ -234,6 +235,9 @@ class CheckoClient:
         self.max_retries = max_retries
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": user_agent, "Accept-Language": "ru,en;q=0.8"})
+        proxy = proxy or os.environ.get("CHECKO_PROXY")
+        if proxy:
+            self.session.proxies.update({"http": proxy.strip(), "https": proxy.strip()})
         self._last_request = 0.0
 
     # --- ротация ключей ---
