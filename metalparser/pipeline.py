@@ -495,16 +495,22 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
           f"{' [браузер]' if config.browser else ''}. Поиск ОГРН по ИНН → карточка.",
           file=sys.stderr, flush=True)
 
+    import re as _re
+    _is_code = lambda s: bool(_re.match(r"^\d{2}(\.\d+)*$", str(s or "").strip()))
+
     def _merge_base(c, base):
-        """Переносит уже собранные поля базы (ОКВЭД/название/регион), которых нет
-        в карточке сайта — карточка отдаёт в основном контакты."""
+        """Переносит уже собранные поля базы (название/регион), которых нет в
+        карточке сайта. ОКВЭД берём из карточки; из базы — только если это
+        реальный код (старые базы могли хранить в этой колонке НАЗВАНИЕ)."""
         c.inn = c.inn or base.get("inn", "")
         c.ogrn = c.ogrn or base.get("ogrn", "")
         c.name = c.name or base.get("name", "")
-        c.okved_code = c.okved_code or base.get("okved_code", "")
+        if not c.okved_code and _is_code(base.get("okved_code")):
+            c.okved_code = base["okved_code"].strip()
         c.okved_name = c.okved_name or base.get("okved_name", "") or _okved_name(c.okved_code)
         if not c.okved_extra and base.get("okved_extra"):
-            c.okved_extra = [x.strip() for x in str(base["okved_extra"]).split(",") if x.strip()]
+            c.okved_extra = [x.strip() for x in str(base["okved_extra"]).split(",")
+                             if _is_code(x)]
         c.region = c.region or base.get("region", "")
         return c
 

@@ -185,10 +185,56 @@ class CheckoSiteClient:
         return c
 
 
+_OKVED_SECTION_RE = re.compile(r'<section id="activity".*?</section>', re.S)
+_OKVED_ROW_RE = re.compile(r'<td[^>]*>\s*(\d{2}(?:\.\d+)*)\s*</td>\s*<td[^>]*>(.*?)</td>', re.S)
+_ACTIVITY_CODE_RE = re.compile(r'id="activity-name"[^>]*>\s*([\d.]+)\s*<')
+_ACTIVITY_TEXT_RE = re.compile(r"text_to_cb\('([^']*)',\s*'activity-name'\)")
+
+
+def _strip_tags(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s)).strip()
+
+
+def extract_okved_from_card(html: str) -> tuple[str, str, list[str]]:
+    """→ (осн_код, осн_наименование, [доп_коды]) из карточки checko.
+    Основной помечен «Основной вид деятельности»; иначе — первая строка таблицы."""
+    main_code = main_name = ""
+    extra: list[str] = []
+    sec = _OKVED_SECTION_RE.search(html)
+    if sec:
+        rows = _OKVED_ROW_RE.findall(sec.group(0))
+        for code, name_html in rows:
+            if "Основной вид деятельности" in name_html:
+                main_code = code
+                main_name = _strip_tags(_html.unescape(name_html))
+            else:
+                extra.append(code)
+        if not main_code and rows:            # маркер не найден — первый = основной
+            main_code = rows[0][0]
+            main_name = _strip_tags(_html.unescape(rows[0][1]))
+            extra = [c for c, _ in rows[1:]]
+    if not main_code:                         # запасной путь: блок «Вид деятельности»
+        m = _ACTIVITY_CODE_RE.search(html)
+        if m:
+            main_code = m.group(1)
+        mn = _ACTIVITY_TEXT_RE.search(html)
+        if mn:
+            main_name = _html.unescape(mn.group(1))
+    return main_code, main_name, extra
+
+
 def parse_card(html: str, ogrn: str = "", okved_code: str = "") -> Company:
     """Разбирает HTML карточки компании checko в Company."""
-    c = Company(ogrn=ogrn, okved_code=okved_code)
-    if okved_code:
+    c = Company(ogrn=ogrn)
+    # ОКВЭД берём ПРЯМО из карточки (точный код + все дополнительные)
+    mc, mn, extra = extract_okved_from_card(html)
+    if mc:
+        c.okved_code = mc
+        c.okved_name = mn or OKVED_NAMES.get(mc, "")
+        if extra:
+            c.okved_extra = extra
+    elif okved_code:                          # карта не дала — используем переданный
+        c.okved_code = okved_code
         c.okved_name = OKVED_NAMES.get(okved_code, "")
 
     m = re.search(r"<title>(.*?)</title>", html, re.S | re.I)
