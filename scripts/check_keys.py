@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,15 @@ from metalparser.checko import (read_keys_file, build_search_params,       # noq
 
 _DATA = os.path.join(os.path.dirname(__file__), "..", "data")
 _KEYS_FILE = os.path.join(_DATA, "api_keys.txt")
+_SECRETS = os.path.join(_DATA, "secrets.json")
+
+
+def _saved(key):
+    try:
+        with open(_SECRETS, encoding="utf-8") as f:
+            return json.load(f).get(key)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 _LIMIT_WORDS = ("лимит", "превыш", "тариф", "суточн", "limit", "exceed", "quota")
@@ -73,11 +83,28 @@ def main():
                    help="прокси для запросов, напр. http://user:pass@host:port (или env CHECKO_PROXY)")
     args = p.parse_args()
 
+    # Берём ключи ТОЧНО так же, как боевой сбор (daily_collect/enrich):
+    #   --key  →  файл api_keys.txt  →  env CHECKO_API_KEY  →  secrets.json
+    # Первый непустой источник побеждает — иначе проверялка и сбор смотрят
+    # в разные места, и статус ключей не совпадает.
     keys: list[str] = []
-    for k in args.key:
-        keys += _parse_keys(k)
-    if args.keys_file and os.path.exists(args.keys_file):
-        keys += read_keys_file(args.keys_file)
+    if args.key:
+        source = "аргумент --key"
+        for k in args.key:
+            keys += _parse_keys(k)
+    else:
+        file_path = os.path.abspath(args.keys_file) if args.keys_file else ""
+        file_keys = _parse_keys(read_keys_file(args.keys_file)) if args.keys_file else []
+        env_keys = _parse_keys(os.environ.get("CHECKO_API_KEY"))
+        saved_keys = _parse_keys(_saved("api_key"))
+        if file_keys:
+            source, keys = f"файл {file_path}", file_keys
+        elif env_keys:
+            source, keys = "переменная окружения CHECKO_API_KEY", env_keys
+        elif saved_keys:
+            source, keys = f"{os.path.abspath(_SECRETS)}", saved_keys
+        else:
+            source, keys = f"файл {file_path}", []
     # уникализируем, сохраняя порядок
     seen, uniq = set(), []
     for k in keys:
@@ -85,10 +112,11 @@ def main():
             seen.add(k)
             uniq.append(k)
     if not uniq:
-        print(f"Нет ключей: положи их в {args.keys_file} (по одному на строку).", file=sys.stderr)
+        print(f"Нет ключей. Источник: {source}. Положи ключи в {args.keys_file} "
+              f"(по одному на строку) или задай CHECKO_API_KEY.", file=sys.stderr)
         return 2
 
-    print(f"Проверяю {len(uniq)} ключ(ей) из {args.keys_file} …", flush=True)
+    print(f"Проверяю {len(uniq)} ключ(ей). Источник: {source}", flush=True)
     session = requests.Session()
     session.headers.update({"User-Agent": DEFAULT_UA, "Accept-Language": "ru,en;q=0.8"})
     proxy = args.proxy or os.environ.get("CHECKO_PROXY")
