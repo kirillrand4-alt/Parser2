@@ -160,19 +160,15 @@ class BrowserSiteClient:
 
     def resolve_ogrn(self, inn: str) -> str:
         """ИНН → ОГРН через строку поиска сайта (браузер исполняет JS SPA)."""
-        import re as _re
-        from .site import search_templates, _OGRN_LINK_RE, _OGRN_IN_URL_RE
+        from .site import search_templates, _extract_ogrn
         for tmpl in search_templates():
             try:
                 html = self._content(tmpl.format(q=inn))
             except Exception:  # noqa: BLE001
                 continue
-            m = _OGRN_IN_URL_RE.search(self.page.url or "")   # редирект на карточку
-            if m:
-                return m.group(1)
-            m = _OGRN_LINK_RE.search(html)                    # первая ссылка результата
-            if m:
-                return m.group(1)
+            ogrn = _extract_ogrn(self.page.url or "", html)
+            if ogrn:
+                return ogrn
         return ""
 
     def card_by_inn(self, inn: str, okved_code: str = "", ogrn: str = "") -> Company:

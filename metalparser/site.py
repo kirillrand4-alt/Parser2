@@ -43,6 +43,22 @@ SEARCH_URLS = _DEFAULT_SEARCH_URLS   # обратная совместимост
 
 _OGRN_LINK_RE = re.compile(r'href="(?:https?://checko\.ru)?/company/[^"]*?-(\d{13})"')
 _OGRN_IN_URL_RE = re.compile(r"-(\d{13})(?:[/?#]|$)")
+# запасные шаблоны: ссылка без слага, ОГРН в JSON (SSR-данные Nuxt/Vue), любой /company/-ОГРН
+_OGRN_LINK2_RE = re.compile(r'/company/[^"\'<> ]*?(\d{13})')
+_OGRN_JSON_RE = re.compile(r'"(?:ОГРН|ogrn|Ogrn)"\s*:\s*"?(\d{13})"?')
+
+
+def _extract_ogrn(final_url: str, html: str) -> str:
+    """Достаёт 13-значный ОГРН из финального URL (редирект на карточку) или из
+    HTML/SSR-данных страницы поиска (ссылка на компанию или JSON)."""
+    m = _OGRN_IN_URL_RE.search(final_url or "")
+    if m:
+        return m.group(1)
+    for rx in (_OGRN_LINK_RE, _OGRN_LINK2_RE, _OGRN_JSON_RE):
+        m = rx.search(html or "")
+        if m:
+            return m.group(1)
+    return ""
 _INN_TITLE_RE = re.compile(r"ИНН\s*(\d{10}|\d{12})")
 _INACTIVE_RE = re.compile(r"ликвидир|прекратил|в стадии ликвид|недейств|исключен", re.I)
 _ACTIVE_RE = re.compile(r"действующ", re.I)
@@ -147,14 +163,9 @@ class CheckoSiteClient:
                 r = self._get(tmpl.format(q=inn))
             except Exception:  # noqa: BLE001
                 continue
-            # checko часто редиректит прямо на карточку → ОГРН в финальном URL
-            m = _OGRN_IN_URL_RE.search(getattr(r, "url", "") or "")
-            if m:
-                return m.group(1)
-            if r.status_code == 200:
-                m = _OGRN_LINK_RE.search(r.text)   # первая ссылка на компанию
-                if m:
-                    return m.group(1)
+            ogrn = _extract_ogrn(getattr(r, "url", "") or "", r.text if r.status_code == 200 else "")
+            if ogrn:
+                return ogrn
         return ""
 
     def card_by_inn(self, inn: str, okved_code: str = "", ogrn: str = "") -> Company:
