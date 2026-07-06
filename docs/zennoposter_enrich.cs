@@ -66,7 +66,7 @@ foreach (var inn in inns) {
         instance.ActiveTab.Navigate("https://checko.ru/search?query=" + inn, "");
         instance.ActiveTab.WaitDownloading();
         System.Threading.Thread.Sleep(2500);            // дать JS SPA отрисоваться
-        string html = instance.ActiveTab.DocumentText;
+        string html = instance.ActiveTab.GetDomText();
         string curUrl = instance.ActiveTab.URL;
 
         // блок / капча -> пауза (решаешь вручную в открытом браузере)
@@ -74,7 +74,7 @@ foreach (var inn in inns) {
             || html.Contains("Слишком много запросов") || html.Contains("429")) {
             project.SendInfoToLog("Блок/капча на ИНН " + inn + " - пауза 60 c, реши капчу вручную", true);
             System.Threading.Thread.Sleep(60000);
-            html = instance.ActiveTab.DocumentText;
+            html = instance.ActiveTab.GetDomText();
             curUrl = instance.ActiveTab.URL;
         }
 
@@ -89,7 +89,7 @@ foreach (var inn in inns) {
             instance.ActiveTab.Navigate("https://checko.ru/company/" + ogrn, "");
             instance.ActiveTab.WaitDownloading();
             System.Threading.Thread.Sleep(2500);
-            html = instance.ActiveTab.DocumentText;
+            html = instance.ActiveTab.GetDomText();
         }
 
         // название / регион из <title>
