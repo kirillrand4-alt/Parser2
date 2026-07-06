@@ -477,27 +477,47 @@ def iter_enrich_site(config: PipelineConfig, inns, on_progress=None,
     skip = skip or set()
     todo, _seen = [], set()
     for it in inns:
-        inn, ogrn = (it if isinstance(it, (tuple, list)) else (it, ""))
-        inn = str(inn or "").strip()
-        ogrn = str(ogrn or "").strip()
+        if isinstance(it, dict):
+            base = dict(it)
+        elif isinstance(it, (tuple, list)):
+            base = {"inn": it[0], "ogrn": (it[1] if len(it) > 1 else "")}
+        else:
+            base = {"inn": it}
+        inn = str(base.get("inn") or "").strip()
+        base["inn"] = inn
         if inn and inn not in skip and inn not in _seen:
             _seen.add(inn)
-            todo.append((inn, ogrn))
+            todo.append(base)
     print(f"  [site] дообогащение через сайт: {len(todo)} ИНН"
           f"{' (с куки)' if config.cookie else ' (без куки — контакты могут быть скрыты)'}"
           f"{' [браузер]' if config.browser else ''}. Поиск ОГРН по ИНН → карточка.",
           file=sys.stderr, flush=True)
+
+    def _merge_base(c, base):
+        """Переносит уже собранные поля базы (ОКВЭД/название/регион), которых нет
+        в карточке сайта — карточка отдаёт в основном контакты."""
+        c.inn = c.inn or base.get("inn", "")
+        c.ogrn = c.ogrn or base.get("ogrn", "")
+        c.name = c.name or base.get("name", "")
+        c.okved_code = c.okved_code or base.get("okved_code", "")
+        c.okved_name = c.okved_name or base.get("okved_name", "") or _okved_name(c.okved_code)
+        if not c.okved_extra and base.get("okved_extra"):
+            c.okved_extra = [x.strip() for x in str(base["okved_extra"]).split(",") if x.strip()]
+        c.region = c.region or base.get("region", "")
+        return c
 
     count = 0
     errors = 0
     fails = 0                      # ошибок подряд (блок/429)
     MAX_FAILS = 15
     try:
-        for inn, ogrn in todo:
+        for base in todo:
+            inn, ogrn = base["inn"], str(base.get("ogrn") or "").strip()
             try:
-                c = client.card_by_inn(inn, ogrn=ogrn)
+                c = client.card_by_inn(inn, okved_code=base.get("okved_code", ""), ogrn=ogrn)
                 if c.enrich_error:              # 200, но страница без данных (капча/заглушка)
                     raise RuntimeError(c.enrich_error)
+                _merge_base(c, base)
                 fails = 0
             except Exception as exc:  # noqa: BLE001
                 fails += 1

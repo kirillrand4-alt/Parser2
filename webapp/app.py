@@ -402,9 +402,10 @@ def _worker(job_id: str, config: PipelineConfig):
         _TEE.unregister()
 
 
-def _read_inns_from_csv(path: str) -> list[tuple[str, str]]:
-    """Пары (ИНН, ОГРН) из CSV-базы. ОГРН может быть пустым — тогда сайт
-    найдёт его поиском по ИНН. Порядок сохраняется, дубли по ИНН убираются."""
+def _read_inns_from_csv(path: str) -> list[dict]:
+    """Записи из CSV-базы: ИНН/ОГРН + уже собранные ОКВЭД/название/регион —
+    чтобы дообогащение через сайт (оно тянет только контакты) не потеряло их.
+    ОГРН может быть пустым — тогда сайт найдёт его поиском по ИНН."""
     import csv as _csv
     out, seen = [], set()
     if not os.path.exists(path):
@@ -412,10 +413,18 @@ def _read_inns_from_csv(path: str) -> list[tuple[str, str]]:
     with open(path, encoding="utf-8-sig", newline="") as fh:
         for row in _csv.DictReader(fh, delimiter=";"):
             inn = (row.get("ИНН") or row.get("inn") or "").strip()
-            ogrn = (row.get("ОГРН") or row.get("ogrn") or "").strip()
-            if inn and inn not in seen:
-                seen.add(inn)
-                out.append((inn, ogrn))
+            if not inn or inn in seen:
+                continue
+            seen.add(inn)
+            out.append({
+                "inn": inn,
+                "ogrn": (row.get("ОГРН") or row.get("ogrn") or "").strip(),
+                "name": (row.get("Название") or row.get("Полное название") or "").strip(),
+                "okved_code": (row.get("Основной ОКВЭД") or "").strip(),
+                "okved_name": (row.get("Вид деятельности") or "").strip(),
+                "okved_extra": (row.get("Доп. ОКВЭД") or "").strip(),
+                "region": (row.get("Регион") or "").strip(),
+            })
     return out
 
 

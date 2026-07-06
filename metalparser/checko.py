@@ -597,14 +597,24 @@ def extract_contacts_from_html(html: str) -> tuple[list[str], list[str], list[st
     phones += _PHONE_RE.findall(text)
     emails += _EMAIL_RE.findall(text)
 
-    # отсеиваем мусорные «сайты»: ассеты, аналитику, гос-/справочные сервисы
+    # отсеиваем мусорные «сайты»: ассеты, аналитику, карты, магазины расширений,
+    # рекламные сети, соцсети-заглушки, гос-/справочные сервисы
     bad = (
         "googleapis", "gstatic", "yastatic", "mc.yandex", "yandex.ru/clck",
-        "google.com/maps", "google-analytics", "doubleclick", "clarity.ms",
-        ".png", ".jpg", ".jpeg", ".svg", ".css", ".js", ".ico", ".woff",
+        "an.yandex", "yandex.ru/maps", "yandex.ru/profile", "maps.yandex",
+        "google.com/maps", "google.com/webstore", "chrome.google.com",
+        "play.google.com", "apps.apple.com", "webstore", "market.yandex",
+        "google-analytics", "doubleclick", "clarity.ms", "googletagmanager",
+        "2gis.ru", "yell.ru", "flamp.ru", "zoon.ru", "orgpage",
+        ".png", ".jpg", ".jpeg", ".svg", ".css", ".js", ".ico", ".woff", ".webp",
         "checko.ru", "fips.ru", "fips_serv", "zakupki.gov", "gov.ru", "nalog.",
         "rusprofile", "list-org", "sbis.ru", "audit-it", "datanewton",
-        "arbitr.ru", "kad.arbitr", "fedresurs", "sudrf",
+        "arbitr.ru", "kad.arbitr", "fedresurs", "sudrf", "rostrud", "consultant.ru",
     )
     sites = [s for s in _uniq(sites) if not any(b in s.lower() for b in bad)]
+
+    # мусорные почты: одноразовые/трекинговые домены (повторяются у всех карточек)
+    bad_mail = ("trashlify", "example.com", "sentry", "wixpress", "domain.com",
+                "email.com", "noreply", "no-reply", ".png", ".jpg")
+    emails = [e for e in _uniq(emails) if not any(b in e.lower() for b in bad_mail)]
     return phones, emails, sites
