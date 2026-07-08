@@ -76,9 +76,10 @@ def run_pass(args, keys_str: str) -> int:
         proxy=args.proxy or os.environ.get("CHECKO_PROXY") or _saved("proxy"),
     )
     app = CsvAppender(args.output)
+    invalid_keys = set()
     n = 0
     try:
-        for c in iter_enrich(config, remaining, skip=skip):
+        for c in iter_enrich(config, remaining, skip=skip, invalid_out=invalid_keys):
             app.write(c)
             n += 1
             tel = c.phones[0] if c.phones else "—"
@@ -87,6 +88,11 @@ def run_pass(args, keys_str: str) -> int:
         raise
     finally:
         app.close()
+    if invalid_keys:                     # выкидываем битые ключи из файла
+        from metalparser.checko import prune_keys_file
+        removed = prune_keys_file(_KEYS_FILE, invalid_keys)
+        if removed:
+            print(f"  Удалено недействительных ключей: {removed} (в data\\dead_keys.txt).", flush=True)
     try:
         write_excel_from_csv(args.output, args.output.rsplit(".", 1)[0] + ".xlsx")
     except Exception:  # noqa: BLE001

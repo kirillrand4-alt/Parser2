@@ -129,6 +129,42 @@ def _is_limit_meta(payload) -> bool:
     return any(w in msg for w in ("лимит", "тариф", "limit", "превыш", "доступ", "forbidden"))
 
 
+def _is_invalid_key(payload) -> bool:
+    """True, если ключ НЕДЕЙСТВИТЕЛЕН (битый навсегда), а не просто исчерпан лимит."""
+    meta = payload.get("meta") if isinstance(payload, dict) else None
+    msg = str((meta or {}).get("message", "")).lower() if isinstance(meta, dict) else ""
+    return any(w in msg for w in ("не действ", "недейств", "неверн", "invalid", "not valid",
+                                  "не найден ключ", "unknown key"))
+
+
+def prune_keys_file(path: str, invalid_keys) -> int:
+    """Удаляет НЕДЕЙСТВИТЕЛЬНЫЕ ключи из файла ключей, перенося их в
+    <path рядом>/dead_keys.txt. Возвращает, сколько удалено."""
+    invalid = {str(k).strip() for k in invalid_keys if str(k).strip()}
+    if not invalid or not os.path.exists(path):
+        return 0
+    kept, removed = [], []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            raw = line.rstrip("\n")
+            tok = raw.split("#", 1)[0].strip()
+            if tok and tok in invalid:
+                removed.append(tok)
+            else:
+                kept.append(raw)
+    if not removed:
+        return 0
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(kept) + ("\n" if kept else ""))
+    os.replace(tmp, path)
+    dead = os.path.join(os.path.dirname(path) or ".", "dead_keys.txt")
+    with open(dead, "a", encoding="utf-8") as fh:
+        for k in removed:
+            fh.write(k + "\n")
+    return len(removed)
+
+
 class KeyPool:
     """Потокобезопасный пул ключей: раздаёт по кругу, исключённые (исчерпавшие
     лимит) больше не выдаёт до конца прогона."""
@@ -136,6 +172,7 @@ class KeyPool:
     def __init__(self, keys):
         self._keys = list(keys)
         self._dead: set[str] = set()
+        self._invalid: set[str] = set()    # ключи «не действителен» (битые навсегда)
         self._lock = threading.Lock()
         self._rr = 0
 
@@ -157,9 +194,15 @@ class KeyPool:
             self._rr = (self._rr + 1) % len(alive)
             return alive[self._rr]
 
-    def mark_dead(self, key: str):
+    def mark_dead(self, key: str, invalid: bool = False):
         with self._lock:
             self._dead.add(key)
+            if invalid:                    # битый навсегда — на удаление из файла
+                self._invalid.add(key)
+
+    def invalid_snapshot(self) -> list:
+        with self._lock:
+            return list(self._invalid)
 
 
 def build_search_params(query, region, active, page) -> dict:
@@ -206,8 +249,13 @@ def pooled_api_get(session, pool: "KeyPool", url: str, params: dict,
             payload = None
         if (payload is not None and _is_limit_meta(payload)) or resp.status_code in (401, 403):
             msg = (((payload or {}).get("meta") or {}).get("message") or f"HTTP {resp.status_code}")
-            pool.mark_dead(key)
-            print(f"  [api] ключ исчерпан ({msg}); живых ключей осталось: {pool.alive()}", file=sys.stderr)
+            # различаем: битый ключ (не действителен) vs исчерпан лимит
+            invalid = _is_invalid_key(payload) or (
+                resp.status_code == 401 and not _is_limit_meta(payload))
+            pool.mark_dead(key, invalid=invalid)
+            tag = "НЕ ДЕЙСТВИТЕЛЕН (удалю из файла)" if invalid else "исчерпан"
+            print(f"  [api] ключ {tag} ({msg}); живых ключей осталось: {pool.alive()}",
+                  file=sys.stderr)
             continue
         resp.raise_for_status()
         if payload is None:

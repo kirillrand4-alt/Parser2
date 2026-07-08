@@ -99,9 +99,10 @@ def main():
         proxy=args.proxy or os.environ.get("CHECKO_PROXY"),
     )
     appender = CsvAppender(args.output)
+    invalid_keys = set()
     n = 0
     try:
-        for c in iter_enrich(config, inns, skip=skip):
+        for c in iter_enrich(config, inns, skip=skip, invalid_out=invalid_keys):
             appender.write(c)
             n += 1
             print(_fmt(c, len(skip) + n), flush=True)
@@ -109,6 +110,12 @@ def main():
         print("Остановлено — собранное сохранено.")
     finally:
         appender.close()
+    if invalid_keys:                     # выкидываем битые ключи из файла
+        from metalparser.checko import prune_keys_file
+        removed = prune_keys_file(_KEYS_FILE, invalid_keys)
+        if removed:
+            print(f"Удалено недействительных ключей из api_keys.txt: {removed} "
+                  f"(перенесены в data\\dead_keys.txt).")
     xlsx = args.xlsx or (args.output.rsplit(".", 1)[0] + ".xlsx")
     write_excel_from_csv(args.output, xlsx)
     print(f"Готово: +{n}, всего в {args.output}: {len(read_existing_keys(args.output))}.")

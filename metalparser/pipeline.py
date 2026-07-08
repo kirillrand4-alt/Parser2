@@ -376,9 +376,12 @@ def _iter_api_parallel(config: PipelineConfig, on_progress, skip: set | None = N
         summary()
 
 
-def iter_enrich(config: PipelineConfig, inns, on_progress=None, skip: set | None = None) -> Iterator[Company]:
+def iter_enrich(config: PipelineConfig, inns, on_progress=None, skip: set | None = None,
+                invalid_out: set | None = None) -> Iterator[Company]:
     """Дообогащение контактами по ГОТОВОМУ списку ИНН — без поиска и пагинации.
-    Параллельно (config.concurrency), с пулом ключей."""
+    Параллельно (config.concurrency), с пулом ключей.
+    invalid_out — если передан set, туда сложатся НЕДЕЙСТВИТЕЛЬНЫЕ ключи
+    (чтобы вызывающий удалил их из файла)."""
     import sys
     from concurrent.futures import ThreadPoolExecutor, as_completed
     import requests as _requests
@@ -429,6 +432,8 @@ def iter_enrich(config: PipelineConfig, inns, on_progress=None, skip: set | None
                 if on_progress:
                     on_progress(count)
     finally:
+        if invalid_out is not None:
+            invalid_out.update(pool.invalid_snapshot())
         print(f"  [api] дообогащено: {count}, ошибок: {errors}", file=sys.stderr)
 
 
